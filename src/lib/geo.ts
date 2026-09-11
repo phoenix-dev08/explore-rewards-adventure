@@ -5,6 +5,26 @@ import { LatLng } from '@/data/types';
 export const MAP_BOX = { lngMin: -158.32, lngMax: -157.6, latMin: 21.22, latMax: 21.74 };
 export const MAP_W = 1000;
 export const MAP_H = 773;
+export const OAHU_CENTER: LatLng = { lat: 21.4389, lng: -157.999 };
+/** MapLibre maxBounds: [west, south], [east, north] with ocean padding. */
+export const OAHU_MAX_BOUNDS: [[number, number], [number, number]] = [
+  [-158.45, 21.15],
+  [-157.52, 21.82],
+];
+
+export function geofenceRing(center: LatLng, radiusM: number, steps = 64): [number, number][] {
+  const ring: [number, number][] = [];
+  const latM = 111_320;
+  const lngM = 111_320 * Math.cos((center.lat * Math.PI) / 180);
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * Math.PI * 2;
+    ring.push([
+      center.lng + (Math.cos(a) * radiusM) / lngM,
+      center.lat + (Math.sin(a) * radiusM) / latM,
+    ]);
+  }
+  return ring;
+}
 
 export function project(c: LatLng) {
   const x = ((c.lng - MAP_BOX.lngMin) / (MAP_BOX.lngMax - MAP_BOX.lngMin)) * MAP_W;
@@ -20,6 +40,12 @@ export function distanceMeters(a: LatLng, b: LatLng) {
   const la2 = (b.lat * Math.PI) / 180;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+export function isInGeofence(user: LatLng | null, stopCoords: LatLng, radiusM: number, distM?: number | null) {
+  if (!user) return false;
+  const d = distM ?? distanceMeters(user, stopCoords);
+  return d <= Math.max(20, radiusM || 100);
 }
 
 export function formatDistance(m: number | null) {

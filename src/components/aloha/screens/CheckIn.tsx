@@ -1,25 +1,44 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlohaStop } from '@/data/types';
 import { CheckInResult, useAloha } from '@/store/AlohaStore';
-import { Btn, Icon, Points, Sheet } from '../kit';
-import { checkInEligibility } from '@/lib/engine';
+import { Btn, CooldownClock, Icon, Points, Sheet } from '../kit';
+import AlohaCollect from '../AlohaCollect';
 import { formatDistance } from '@/lib/geo';
 import { useHelpers } from '../cards';
 import { cn } from '@/lib/utils';
 
-type Stage = 'choose' | 'gps' | 'qr' | 'result';
+type Stage = 'arrive' | 'collect' | 'gps' | 'qr' | 'result';
 
 const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }> = ({ stop, open, onClose }) => {
-  const { db, doCheckIn, coords, locStatus, requestLocation, go, distanceTo } = useAloha();
-  const h = useHelpers();
-  const [stage, setStage] = useState<Stage>('choose');
+  const { doCheckIn, coords, locStatus, requestLocation, go, distanceTo, stopEligibility } = useAloha();
+  const [stage, setStage] = useState<Stage>('arrive');
   const [result, setResult] = useState<CheckInResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [qrHint, setQrHint] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  useEffect(() => { if (open) { setStage('choose'); setResult(null); } }, [open]);
-
-  const elig = checkInEligibility(db as never, stop);
+  const elig = stopEligibility(stop);
   const dist = distanceTo(stop.coords);
+
+  useEffect(() => {
+    if (!open) {
+      stopCamera();
+      return;
+    }
+    setResult(null);
+    if (elig.interactionCooling) setStage('arrive');
+    else if (elig.inRange) setStage('collect');
+    else setStage('arrive');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, stop.id]);
+
+  useEffect(() => () => stopCamera(), []);
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  };
 
   const runGps = async () => {
     setStage('gps');
@@ -30,27 +49,61 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
     if (navigator.vibrate) navigator.vibrate(res.ok ? [14, 40, 22] : 40);
   };
 
-  const runQr = async () => {
+  const runQr = async (payload?: string) => {
     setScanning(true);
-    // Signed, short-lived payload verified server-side: <stopId>.<nonce>.<issuedAt>
-    const res = await doCheckIn(stop.id, 'qr', null, `${stop.id}.${Math.random().toString(36).slice(2, 10)}.${Date.now()}`);
+    const nonce = payload ?? `${stop.id}.${Math.random().toString(36).slice(2, 10)}.${Date.now()}`;
+    const res = await doCheckIn(stop.id, 'qr', null, nonce);
     setScanning(false);
+    stopCamera();
     setResult(res);
     setStage('result');
     if (navigator.vibrate) navigator.vibrate([14, 40, 22]);
   };
 
+  const startCamera = async () => {
+    setStage('qr');
+    setQrHint('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      const Detector = (window as unknown as { BarcodeDetector?: new (o: { formats: string[] }) => { detect: (s: CanvasImageSource) => Promise<{ rawValue: string }[]> } }).BarcodeDetector;
+      if (Detector && videoRef.current) {
+        const det = new Detector({ formats: ['qr_code'] });
+        const loop = async () => {
+          if (!videoRef.current || !streamRef.current) return;
+          try {
+            const codes = await det.detect(videoRef.current);
+            const value = codes[0]?.rawValue;
+            if (value) { await runQr(value); return; }
+          } catch { /* keep scanning */ }
+          window.setTimeout(loop, 350);
+        };
+        void loop();
+      } else {
+        setQrHint('Live QR decode is not available in this browser. Use the demo scan below, or a partner code on device.');
+      }
+    } catch {
+      setQrHint('Camera permission was blocked. You can still simulate a signed partner code in this preview.');
+    }
+  };
+
   return (
-    <Sheet open={open} onClose={onClose} label="Verify your visit" full={stage === 'result' && !!result?.ok}>
-      {stage === 'choose' && (
+    <Sheet open={open} onClose={() => { stopCamera(); onClose(); }} label="Collect Aloha Stop" full={stage === 'result' && !!result?.ok}>
+      {stage === 'arrive' && (
         <div className="px-5 pb-5 pt-2">
           <div className="mb-1 flex items-center gap-2">
-            <Icon name="ShieldCheck" className="h-5 w-5 text-[#1FA9A3]" />
-            <h3 className="text-[20px] font-black text-[#062B3F]">Verify Your Visit</h3>
+            <Icon name="Compass" className="h-5 w-5 text-[#1FA9A3]" />
+            <h3 className="text-[20px] font-black text-[#062B3F]">
+              {elig.interactionCooling ? 'Stop cooling down' : elig.inRange ? 'You’re here' : 'Travel to this Stop'}
+            </h3>
           </div>
           <p className="text-[13px] leading-relaxed text-[#0B4F6C]/65">
-            To protect Aloha Points and partner rewards, we verify qualifying visits. Verification runs server-side —
-            your device never decides how many points you earn.
+            Aloha Stops only open inside a {stop.geofence_m} m geofence. Collecting is a branded interaction —
+            then we verify the visit server-side so points cannot be farmed from the couch.
           </p>
 
           <div className="mt-4 flex items-center gap-3 rounded-2xl bg-white p-3 ring-1 ring-black/5">
@@ -64,34 +117,72 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
             <span className="rounded-xl bg-[#0B4F6C]/8 px-2.5 py-1.5 text-[12px] font-black text-[#0B4F6C]">+{elig.points}</span>
           </div>
 
-          {elig.cooling && (
-            <Notice tone="warn" icon="Clock" title="Cooldown active"
-              body={`This Aloha Stop rewards points once every ${elig.rule.cooldown_hours} hours. You can qualify again ${elig.nextEligible ? elig.nextEligible.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'soon'}.`} />
+          {elig.interactionCooling && elig.interactionReadyAt && (
+            <Notice tone="warn" icon="Clock" title="Interaction cooldown"
+              body={`Same-Stop farming is blocked. ${elig.interactionMinutes}-minute cooldown is admin-configurable and separate from point eligibility.`} />
+          )}
+          {elig.interactionCooling && elig.interactionReadyAt && (
+            <div className="mt-3 rounded-2xl bg-[#062B3F] px-4 py-3 text-center text-white">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/50">Available again in</p>
+              <CooldownClock until={elig.interactionReadyAt} prefix="" className="text-[28px] font-black text-[#E7C577]" />
+            </div>
+          )}
+          {elig.pointsCooling && !elig.interactionCooling && (
+            <Notice tone="info" icon="Coins" title="Points already earned for this window"
+              body={`You can still collect after the interaction cooldown. Full Aloha Points return ${elig.pointsReadyAt ? elig.pointsReadyAt.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'later'}. Passport and Hunt progress stay one-time.`} />
+          )}
+          {elig.stampAlreadyOwned && (
+            <Notice tone="info" icon="Stamp" title="Passport stamp already earned" body="This Stop’s Island Passport stamp is one-time. Future collects won’t re-stamp it." />
+          )}
+          {elig.huntsThatCount.some((x) => x.already) && (
+            <Notice tone="info" icon="Flag" title="Hunt checkpoint already counted"
+              body={elig.huntsThatCount.filter((x) => x.already).map((x) => x.name).join(', ')} />
           )}
           {locStatus === 'denied' && (
             <Notice tone="info" icon="LocateOff" title="Location is off"
-              body="Enable location to verify by proximity, or scan the business QR code at the counter — both are accepted." />
+              body="Enable location to collect by proximity, or scan the business QR at the counter." />
+          )}
+          {!elig.inRange && !elig.interactionCooling && coords && (
+            <Notice tone="warn" icon="MapPinOff" title="Outside the geofence"
+              body={`Get within ${stop.geofence_m} m to activate this Stop. ${formatDistance(dist)} now.`} />
+          )}
+          {!coords && locStatus !== 'denied' && (
+            <Notice tone="info" icon="LocateFixed" title="Location needed to collect"
+              body="We only read GPS at collect time — never as a background trail." />
           )}
 
           <div className="mt-4 space-y-2.5">
-            <button onClick={runGps} className="flex w-full items-center gap-3 rounded-2xl bg-gradient-to-br from-[#0B4F6C] to-[#062B3F] p-4 text-left text-white shadow-[0_16px_34px_-18px_rgba(6,43,63,.9)] transition active:scale-[.98]">
-              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15"><Icon name="LocateFixed" className="h-5 w-5" /></span>
-              <span className="flex-1">
-                <span className="block text-[15px] font-extrabold">Verify My Location</span>
-                <span className="block text-[11.5px] text-white/65">High-accuracy GPS, requested only right now</span>
-              </span>
-              <Icon name="ChevronRight" className="h-5 w-5 text-white/60" />
-            </button>
+            {elig.inRange && elig.canInteract && (
+              <button onClick={() => setStage('collect')} className="flex w-full items-center gap-3 rounded-2xl bg-gradient-to-br from-[#1FA9A3] to-[#0B4F6C] p-4 text-left text-white shadow-[0_16px_34px_-18px_rgba(6,43,63,.9)] transition active:scale-[.98]">
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15"><Icon name="Sparkles" className="h-5 w-5" /></span>
+                <span className="flex-1">
+                  <span className="block text-[15px] font-extrabold">Collect this Aloha Stop</span>
+                  <span className="block text-[11.5px] text-white/65">Hold the puka, then swipe the swell</span>
+                </span>
+                <Icon name="ChevronRight" className="h-5 w-5 text-white/60" />
+              </button>
+            )}
+            {!elig.inRange && !elig.interactionCooling && (
+              <>
+                <Btn full size="lg" variant="primary" icon="LocateFixed" onClick={() => { void requestLocation(); }}>
+                  {coords ? 'Recheck my location' : 'Share location'}
+                </Btn>
+                <Btn full variant="outline" icon="Navigation"
+                  onClick={() => window.open(`https://maps.google.com/?q=${stop.coords.lat},${stop.coords.lng}`, '_blank')}>
+                  Get directions
+                </Btn>
+              </>
+            )}
             <button
-              onClick={() => setStage('qr')}
-              disabled={!stop.qr_enabled}
+              onClick={() => void startCamera()}
+              disabled={!stop.qr_enabled || elig.interactionCooling}
               className="flex w-full items-center gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-black/8 transition active:scale-[.98] disabled:opacity-45"
             >
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1FA9A3]/12"><Icon name="QrCode" className="h-5 w-5 text-[#1FA9A3]" /></span>
               <span className="flex-1">
-                <span className="block text-[15px] font-extrabold text-[#062B3F]">Scan Business QR</span>
+                <span className="block text-[15px] font-extrabold text-[#062B3F]">Scan business QR</span>
                 <span className="block text-[11.5px] text-[#0B4F6C]/55">
-                  {stop.qr_enabled ? 'Signed code, valid for 60 seconds' : 'Not available at this Aloha Stop'}
+                  {stop.qr_enabled ? 'Signed partner code — extra verification' : 'Not available at this Aloha Stop'}
                 </span>
               </span>
               <Icon name="ChevronRight" className="h-5 w-5 text-[#0B4F6C]/35" />
@@ -100,8 +191,19 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
 
           <p className="mt-4 flex items-start gap-2 text-[11px] leading-relaxed text-[#0B4F6C]/45">
             <Icon name="Lock" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Aloha Hunt never tracks you in the background. Location is read once per verification and is not stored as a trail.
+            Aloha Hunt never tracks you in the background. Location is read once per collect. Points, stamps, and Hunt progress are decided on the server.
           </p>
+        </div>
+      )}
+
+      {stage === 'collect' && (
+        <div className="px-5 pb-6 pt-2">
+          <h3 className="text-center text-[20px] font-black text-[#062B3F]">Collect {stop.name}</h3>
+          <p className="mx-auto mt-1 max-w-sm text-center text-[12.5px] text-[#0B4F6C]/65">
+            Original Aloha Hunt ritual — hold, then open the swell. This is not a copy of any other game’s stop interaction.
+          </p>
+          <AlohaCollect stopName={stop.name} onCollected={() => void runGps()} />
+          <Btn full variant="ghost" className="mt-2" onClick={() => setStage('arrive')}>Back</Btn>
         </div>
       )}
 
@@ -121,23 +223,24 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
 
       {stage === 'qr' && (
         <div className="px-5 pb-6 pt-2">
-          <h3 className="text-[19px] font-black text-[#062B3F]">Scan Business QR</h3>
+          <h3 className="text-[19px] font-black text-[#062B3F]">Scan business QR</h3>
           <p className="mt-1 text-[12.5px] text-[#0B4F6C]/65">Point the camera at the Aloha Hunt code at the register.</p>
           <div className="relative mt-4 aspect-square w-full overflow-hidden rounded-3xl bg-[#031A27]">
-            <div className="absolute inset-0 opacity-40" style={{ background: 'radial-gradient(60% 60% at 50% 45%, #0d5878, #031A27)' }} />
-            <div className="absolute inset-10 rounded-2xl border-2 border-dashed border-white/25" />
+            <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover" playsInline muted />
+            <div className="pointer-events-none absolute inset-10 rounded-2xl border-2 border-dashed border-white/25" />
             {[['left-8 top-8', 'border-l-4 border-t-4 rounded-tl-2xl'], ['right-8 top-8', 'border-r-4 border-t-4 rounded-tr-2xl'], ['left-8 bottom-8', 'border-l-4 border-b-4 rounded-bl-2xl'], ['right-8 bottom-8', 'border-r-4 border-b-4 rounded-br-2xl']].map(([pos, b]) => (
-              <span key={pos} className={cn('absolute h-12 w-12 border-[#1FA9A3]', pos, b)} />
+              <span key={pos} className={cn('pointer-events-none absolute h-12 w-12 border-[#1FA9A3]', pos, b)} />
             ))}
             {scanning && <span className="absolute inset-x-10 top-10 h-0.5 animate-[ah-scan_1.6s_ease-in-out_infinite] bg-[#8FE3DC] shadow-[0_0_18px_#8FE3DC]" />}
             <div className="absolute inset-x-0 bottom-4 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-white/55">
-              {scanning ? 'Verifying signed payload…' : 'Camera unavailable in preview'}
+              {scanning ? 'Verifying signed payload…' : 'Align the partner code'}
             </div>
           </div>
-          <Btn full size="lg" variant="secondary" className="mt-4" icon="ScanLine" onClick={runQr} disabled={scanning}>
-            {scanning ? 'Scanning…' : 'Simulate Valid QR'}
+          {qrHint && <p className="mt-3 text-[12px] leading-relaxed text-[#0B4F6C]/60">{qrHint}</p>}
+          <Btn full size="lg" variant="secondary" className="mt-4" icon="ScanLine" onClick={() => void runQr()} disabled={scanning}>
+            {scanning ? 'Scanning…' : 'Use demo partner code'}
           </Btn>
-          <Btn full variant="ghost" className="mt-2" onClick={() => setStage('choose')}>Back to options</Btn>
+          <Btn full variant="ghost" className="mt-2" onClick={() => { stopCamera(); setStage('arrive'); }}>Back to options</Btn>
           <p className="mt-3 text-[11px] leading-relaxed text-[#0B4F6C]/45">
             Production codes are rotating, signed payloads (stop id + nonce + timestamp) validated server-side with replay protection.
           </p>
@@ -166,13 +269,15 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
                   Get Directions
                 </Btn>
                 {stop.qr_enabled && result.failure === 'too_far' && (
-                  <Btn full variant="outline" icon="QrCode" onClick={() => setStage('qr')}>Use QR verification instead</Btn>
+                  <Btn full variant="outline" icon="QrCode" onClick={() => void startCamera()}>Use QR verification instead</Btn>
                 )}
                 <Btn full variant="ghost" onClick={onClose}>Close</Btn>
               </div>
-              <p className="mt-4 text-center text-[11px] text-[#0B4F6C]/45">
-                No Aloha Points were awarded. This attempt was recorded for fraud review.
-              </p>
+              {result.failure !== 'network' && (
+                <p className="mt-4 text-center text-[11px] text-[#0B4F6C]/45">
+                  No Aloha Points were awarded. This attempt was recorded for fraud review.
+                </p>
+              )}
             </div>
           )
       )}
@@ -191,7 +296,6 @@ const Success: React.FC<{ stop: AlohaStop; result: CheckInResult; onClose: () =>
   return (
     <div className="relative overflow-hidden px-5 pb-8 pt-4">
       <div className="pointer-events-none absolute inset-x-0 -top-10 h-64 opacity-70" style={{ background: 'radial-gradient(60% 60% at 50% 40%, rgba(212,168,83,.35), transparent 70%)' }} />
-      {/* particle burst */}
       <div className="pointer-events-none absolute left-1/2 top-16 h-0 w-0">
         {Array.from({ length: 14 }).map((_, i) => (
           <span
@@ -211,14 +315,19 @@ const Success: React.FC<{ stop: AlohaStop; result: CheckInResult; onClose: () =>
           <Icon name="Check" className="h-10 w-10 text-white" strokeWidth={3} />
         </div>
         <h2 className="mt-4 text-[34px] font-black tracking-[0.14em] text-[#062B3F]">ALOHA!</h2>
-        <p className="text-[13px] font-bold uppercase tracking-[0.2em] text-[#1FA9A3]">Visit verified</p>
+        <p className="text-[13px] font-bold uppercase tracking-[0.2em] text-[#1FA9A3]">
+          {result.soft ? 'Stop collected' : 'Visit verified'}
+        </p>
 
         <div className="mt-5 w-full rounded-3xl bg-white p-5 shadow-[0_18px_44px_-26px_rgba(6,43,63,.6)]">
           <div className="flex items-center justify-between">
             <span className="text-[13px] font-bold text-[#0B4F6C]/65">{stop.name}</span>
-            <span className="text-[26px] font-black text-[#062B3F]">+{result.points}</span>
+            <span className="text-[26px] font-black text-[#062B3F]">+{result.points ?? 0}</span>
           </div>
           <p className="text-right text-[11px] font-black uppercase tracking-wide text-[#0B4F6C]/45">Aloha Points</p>
+          {result.soft && result.detail && (
+            <p className="mt-2 text-[12.5px] leading-relaxed text-[#0B4F6C]/65">{result.detail}</p>
+          )}
 
           {result.drop && (
             <div className="mt-3 flex items-center gap-2.5 rounded-2xl bg-gradient-to-br from-[#FF9E4A] to-[#FF6F59] p-3 text-white">

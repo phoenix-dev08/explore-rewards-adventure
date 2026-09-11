@@ -106,10 +106,10 @@ export const categories: Category[] = [
 
 // --- point rules (admin configurable) ---------------------------------------
 export const pointRules: PointRule[] = [
-  { id: 'pr_visit_standard', code: 'VISIT_STANDARD', label: 'Verified Aloha Stop visit', points: 100, cooldown_hours: 24, max_per_location_per_week: 3, daily_cap: 800, weekly_cap: 3500, active: true },
-  { id: 'pr_visit_premium', code: 'VISIT_PREMIUM', label: 'Verified visit — featured partner', points: 150, cooldown_hours: 24, max_per_location_per_week: 2, daily_cap: 800, weekly_cap: 3500, active: true },
-  { id: 'pr_visit_experience', code: 'VISIT_EXPERIENCE', label: 'Verified experience / tour visit', points: 250, cooldown_hours: 72, max_per_location_per_week: 1, daily_cap: 800, weekly_cap: 3500, active: true },
-  { id: 'pr_referral', code: 'REFERRAL', label: 'Eligible referral', points: 300, cooldown_hours: 0, max_per_location_per_week: 99, daily_cap: 900, weekly_cap: 3000, active: true },
+  { id: 'pr_visit_standard', code: 'VISIT_STANDARD', label: 'Verified Aloha Stop visit', points: 100, cooldown_hours: 24, interaction_cooldown_min: 15, max_per_location_per_week: 3, daily_cap: 800, weekly_cap: 3500, active: true },
+  { id: 'pr_visit_premium', code: 'VISIT_PREMIUM', label: 'Verified visit — featured partner', points: 150, cooldown_hours: 24, interaction_cooldown_min: 15, max_per_location_per_week: 2, daily_cap: 800, weekly_cap: 3500, active: true },
+  { id: 'pr_visit_experience', code: 'VISIT_EXPERIENCE', label: 'Verified experience / tour visit', points: 250, cooldown_hours: 72, interaction_cooldown_min: 15, max_per_location_per_week: 1, daily_cap: 800, weekly_cap: 3500, active: true },
+  { id: 'pr_referral', code: 'REFERRAL', label: 'Eligible referral', points: 300, cooldown_hours: 0, interaction_cooldown_min: 15, max_per_location_per_week: 99, daily_cap: 900, weekly_cap: 3000, active: true },
 ];
 
 const hoursStd = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ day: d, open: '07:00', close: '18:00' }));

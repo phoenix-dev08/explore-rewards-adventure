@@ -163,6 +163,26 @@ const Admin: React.FC = () => {
 
           {section === 'points' && (
             <Panel title="Aloha Points configuration" sub="Point values, cooldowns and earning limits are enforced server-side. Editing a value here changes what the consumer app displays and awards.">
+              <div className="mb-4 rounded-2xl bg-[#1FA9A3]/12 p-4 ring-1 ring-[#1FA9A3]/25">
+                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#8FE3DC]">Aloha Stop interaction cooldown</p>
+                <p className="mt-1 text-[12.5px] text-white/70">
+                  After a user collects a Stop, that Stop cools down before they can interact again. This is separate from
+                  full Aloha Points, Passport stamps (once), Hunt checkpoints (once), and Drop eligibility.
+                </p>
+                <div className="mt-3 flex items-center gap-3">
+                  <p className="text-[28px] font-black">{db.pointRules[0]?.interaction_cooldown_min ?? 15}<span className="ml-1 text-[13px] font-bold text-white/50">min</span></p>
+                  <div className="flex gap-2">
+                    <button
+                      className="h-9 w-9 rounded-xl bg-white/10 text-[18px] font-black"
+                      onClick={() => db.pointRules[0] && updateRule(db.pointRules[0].id, { interaction_cooldown_min: Math.max(1, (db.pointRules[0].interaction_cooldown_min ?? 15) - 1) })}
+                    >−</button>
+                    <button
+                      className="h-9 w-9 rounded-xl bg-white/10 text-[18px] font-black"
+                      onClick={() => db.pointRules[0] && updateRule(db.pointRules[0].id, { interaction_cooldown_min: (db.pointRules[0].interaction_cooldown_min ?? 15) + 1 })}
+                    >+</button>
+                  </div>
+                </div>
+              </div>
               <div className="space-y-3">
                 {db.pointRules.map((r) => (
                   <div key={r.id} className="rounded-2xl bg-white/6 p-4 ring-1 ring-white/8">
@@ -175,7 +195,8 @@ const Admin: React.FC = () => {
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {[
-                        ['Cooldown', `${r.cooldown_hours}h`, (d: number) => updateRule(r.id, { cooldown_hours: Math.max(0, r.cooldown_hours + d) })],
+                        ['Interact cooldown', `${r.interaction_cooldown_min ?? 15}m`, (d: number) => updateRule(r.id, { interaction_cooldown_min: Math.max(1, (r.interaction_cooldown_min ?? 15) + d) })],
+                        ['Points cooldown', `${r.cooldown_hours}h`, (d: number) => updateRule(r.id, { cooldown_hours: Math.max(0, r.cooldown_hours + d) })],
                         ['Per location / wk', String(r.max_per_location_per_week), (d: number) => updateRule(r.id, { max_per_location_per_week: Math.max(1, r.max_per_location_per_week + d) })],
                         ['Daily cap', r.daily_cap.toLocaleString(), (d: number) => updateRule(r.id, { daily_cap: Math.max(100, r.daily_cap + d * 100) })],
                         ['Weekly cap', r.weekly_cap.toLocaleString(), (d: number) => updateRule(r.id, { weekly_cap: Math.max(100, r.weekly_cap + d * 500) })],

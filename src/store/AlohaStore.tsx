@@ -7,8 +7,9 @@ import {
   Reward, Role, UserHuntProgress, UserProfile, UserStamp,
 } from '@/data/types';
 import { DEMO_LOCATIONS, IMAGES } from '@/data/seed';
-import { DbState } from '@/lib/engine';
+import { checkInEligibility, DEFAULT_INTERACTION_COOLDOWN_MIN, DbState } from '@/lib/engine';
 import { distanceMeters } from '@/lib/geo';
+import { getDeviceHash, readInteractionCooldownMin, readLocalInteractions, writeInteractionCooldownMin, writeLocalInteraction } from '@/lib/device';
 
 // ---------------------------------------------------------------------------
 // Aloha Hunt client store — database backed.
@@ -40,6 +41,8 @@ export interface CheckInResult {
   huntProgressed?: { huntId: string; completed: boolean; completionPoints: number; bonusPoints: number }[];
   drop?: { dropId: string; points: number; rewardLabel?: string } | null;
   newBalance?: number;
+  /** Interaction recorded locally; server did not award points (already on points cooldown). */
+  soft?: boolean;
 }
 
 export interface RedeemResult {
@@ -86,6 +89,8 @@ interface AlohaContextValue {
   demoLabel: string;
   distanceTo: (c: LatLng) => number | null;
   db: FullDb;
+  stopEligibility: (stop: AlohaStop) => ReturnType<typeof checkInEligibility>;
+  recordLocalInteraction: (stopId: string) => void;
   doCheckIn: (stopId: string, method: 'gps' | 'qr', coordsOverride?: LatLng | null, qrNonce?: string) => Promise<CheckInResult>;
   doRedeem: (rewardId: string) => Promise<RedeemResult>;
   markRedemptionUsed: (id: string) => Promise<void>;
@@ -185,6 +190,7 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [pointsPulse, setPointsPulse] = useState(0);
   const [db, setDb] = useState<FullDb>(emptyDb);
+  const [localInteractions, setLocalInteractions] = useState<Record<string, string>>({});
   const adventuresRef = useRef<Adventure[]>([]);
   const activeUserId = useRef<string | null>(null);
   const enteringRef = useRef(false);
@@ -241,11 +247,21 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .map((f) => f.payload as Adventure);
     adventuresRef.current = [...savedAdventures, ...adventuresRef.current.filter((a) => !savedAdventures.some((s) => s.id === a.id))];
 
+    const storedMin = readInteractionCooldownMin();
+    const mappedRules = ((rules.data ?? []) as PointRule[]).map((r) => ({
+      ...r,
+      interaction_cooldown_min: typeof r.interaction_cooldown_min === 'number' && r.interaction_cooldown_min > 0
+        ? r.interaction_cooldown_min
+        : (storedMin && storedMin > 0 ? storedMin : DEFAULT_INTERACTION_COOLDOWN_MIN),
+    }));
+    const uidForInteract = String(profileRow?.id ?? activeUserId.current ?? '');
+    if (uidForInteract) setLocalInteractions(readLocalInteractions(uidForInteract));
+
     setDb({
       islands: (islands.data ?? []).map(mapIsland),
       regions: (regions.data ?? []).map(mapRegion),
       categories: (categories.data ?? []) as Category[],
-      pointRules: (rules.data ?? []) as PointRule[],
+      pointRules: mappedRules,
       businesses: (businesses.data ?? []) as Business[],
       stops: (stops.data ?? []).map(mapStop),
       hunts: (hunts.data ?? []) as Hunt[],
@@ -564,9 +580,48 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setDemoLocation = useCallback((c: LatLng, label: string) => { setLocStatus('demo'); setCoords(c); setDemoLabel(label); }, []);
   const distanceTo = useCallback((c: LatLng) => (coords ? distanceMeters(coords, c) : null), [coords]);
 
+  const recordLocalInteraction = useCallback((stopId: string) => {
+    const uidUser = activeUserId.current;
+    if (!uidUser) return;
+    setLocalInteractions(writeLocalInteraction(uidUser, stopId));
+  }, []);
+
+  const stopEligibility = useCallback((stop: AlohaStop) => checkInEligibility(db, stop, {
+    distanceM: distanceTo(stop.coords),
+    userCoords: coords,
+    localInteractionAt: localInteractions[stop.id] ?? null,
+  }), [db, distanceTo, coords, localInteractions]);
+
   // --- privileged actions via edge functions --------------------------------
   const doCheckIn = useCallback(async (stopId: string, method: 'gps' | 'qr', coordsOverride?: LatLng | null, qrNonce?: string): Promise<CheckInResult> => {
     const useCoords = coordsOverride !== undefined ? coordsOverride : coords;
+    const stop = db.stops.find((s) => s.id === stopId);
+    const elig = stop ? stopEligibility(stop) : null;
+    if (elig?.interactionCooling) {
+      return {
+        ok: false,
+        failure: 'interaction_cooldown',
+        message: 'Aloha Stop cooling down',
+        detail: `This Stop can be collected again after the ${elig.interactionMinutes}-minute interaction cooldown.`,
+        distance_m: elig.distanceM ?? undefined,
+      };
+    }
+    // Interaction is allowed, but full points / stamp / hunt may already be spent.
+    // Record a local collect so farming the same pin is still blocked for ~15 minutes
+    // without hammering the ledger when the server would reject a duplicate award.
+    if (elig?.hasVerifiedVisit && !elig.canEarnPoints) {
+      recordLocalInteraction(stopId);
+      return {
+        ok: true,
+        soft: true,
+        points: 0,
+        message: 'Aloha Stop collected',
+        detail: elig.pointsCooling
+          ? `Full Aloha Points already earned for this visit window. Next points ${elig.pointsReadyAt ? elig.pointsReadyAt.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'soon'}.`
+          : 'Hunt, Passport, and point awards for this Stop are already claimed. Come back after the interaction cooldown to collect again.',
+        distance_m: elig.distanceM ?? undefined,
+      };
+    }
     const { data, error } = await supabase.functions.invoke('verify-checkin', {
       body: {
         stopId,
@@ -575,17 +630,23 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         lng: useCoords?.lng ?? null,
         qrNonce: qrNonce ?? null,
         idempotencyKey: `chk:${stopId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-        deviceHash: 'dev_9f31',
+        deviceHash: getDeviceHash(),
       },
     });
     if (error || !data) {
       return { ok: false, failure: 'network', message: 'Network problem', detail: 'We could not reach the verification service. Check your connection and try again.' };
     }
     const res = data as CheckInResult;
-    if (res.ok) setPointsPulse((n) => n + 1);
+    if (res.ok) {
+      recordLocalInteraction(stopId);
+      setPointsPulse((n) => n + 1);
+    } else if (res.failure === 'cooldown' || /cooldown/i.test(res.message ?? '')) {
+      recordLocalInteraction(stopId);
+      return { ...res, ok: true, soft: true, points: 0, message: 'Aloha Stop collected', detail: res.detail ?? res.message };
+    }
     await refresh();
     return res;
-  }, [coords, refresh]);
+  }, [coords, refresh, db.stops, stopEligibility, recordLocalInteraction]);
 
   const doRedeem = useCallback(async (rewardId: string): Promise<RedeemResult> => {
     const { data, error } = await supabase.functions.invoke('redeem-reward', {
@@ -615,9 +676,11 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const { data, error } = await supabase.functions.invoke('claim-drop', { body: { dropId } });
     if (error || !data) return { ok: false, message: 'Could not reach the Drop service' };
     const res = data as { ok: boolean; message: string; stopId?: string };
+    await refresh();
+    toast({ title: res.ok ? 'Aloha Drop' : 'Drop not claimed', body: res.message, tone: res.ok ? 'success' : 'error' });
     if (res.stopId) go({ name: 'stop', id: res.stopId });
     return { ok: res.ok, message: res.message };
-  }, [go]);
+  }, [go, refresh, toast]);
 
   // --- user-scoped writes (RLS enforced) -----------------------------------
   const toggleFavorite = useCallback(async (type: Favorite['entity_type'], id: string) => {
@@ -696,7 +759,17 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [refresh, toast]);
 
   const updateRule = useCallback(async (id: string, patch: Partial<PointRule>) => {
-    await patchTable('point_rules', 'pointRules', id, patch as Record<string, unknown>);
+    if (typeof patch.interaction_cooldown_min === 'number') {
+      writeInteractionCooldownMin(patch.interaction_cooldown_min);
+      setDb((p) => ({
+        ...p,
+        pointRules: p.pointRules.map((r) => ({ ...r, interaction_cooldown_min: patch.interaction_cooldown_min })),
+      }));
+      await supabase.from('point_rules').update({ interaction_cooldown_min: patch.interaction_cooldown_min }).eq('id', id);
+    }
+    const rest = { ...patch };
+    delete rest.interaction_cooldown_min;
+    if (Object.keys(rest).length) await patchTable('point_rules', 'pointRules', id, rest as Record<string, unknown>);
   }, [patchTable]);
 
   const updatePointRule = useCallback(async (id: string, points: number) => {
@@ -747,7 +820,7 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     signInEmail, signUpEmail, signInOAuth, signInDemo, resetPassword, signOut, setRole, refresh,
     screen, tab, go, back, canGoBack: stack.length > 1,
     locStatus, coords, requestLocation, denyLocation, setDemoLocation, demoLabel, distanceTo,
-    db, doCheckIn, doRedeem, markRedemptionUsed, claimDrop, toggleFavorite, isFavorite,
+    db, stopEligibility, recordLocalInteraction, doCheckIn, doRedeem, markRedemptionUsed, claimDrop, toggleFavorite, isFavorite,
     startHunt, saveAdventure, markNotificationsRead, setPref,
     updatePointRule, updateRule, updateStop, updateReward, updateHunt, updateDrop,
     updateSubmission, updateFlag, addSubmission, logAudit,

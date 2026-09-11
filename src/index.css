@@ -46,6 +46,19 @@
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(210px); }
 }
+@keyframes ah-swell {
+  0% { transform: scale(0.72); opacity: 0.55; }
+  70% { transform: scale(1.45); opacity: 0.12; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes ah-lei-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes ah-marker-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 197, 119, 0.55), 0 0 18px 6px rgba(31, 169, 163, 0.35); }
+  50% { box-shadow: 0 0 0 12px rgba(231, 197, 119, 0), 0 0 28px 10px rgba(31, 169, 163, 0.55); }
+}
 
 
 @layer base {
@@ -182,4 +195,31 @@
 .markdown-preview ul,
 .markdown-preview ol {
   @apply my-4 ml-6;
+}
+
+/* Real MapLibre map — never let the canvas expand the page */
+.ah-real-map,
+.ah-real-map .maplibregl-map,
+.ah-real-map .maplibregl-canvas-container,
+.ah-real-map .maplibregl-canvas {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+}
+.ah-real-map .maplibregl-ctrl-bottom-left {
+  left: 8px;
+  bottom: 8px;
+}
+.ah-real-map:not(.ah-map-compact) .maplibregl-ctrl-bottom-left {
+  bottom: 118px;
+}
+.ah-real-map .maplibregl-ctrl-attrib {
+  background: rgba(251, 247, 240, 0.86);
+  color: #0B4F6C;
+  font-size: 10px;
+  border-radius: 8px;
+}
+.ah-real-map .maplibregl-ctrl-attrib a {
+  color: #0B4F6C;
 }

@@ -1,17 +1,21 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAloha } from '@/store/AlohaStore';
 import MapCanvas from '../MapCanvas';
-import { Btn, Chip, Icon, Pill, Sheet, Skeleton } from '../kit';
-import { PointsBadge, StopCard, StopRow, SaveButton, useHelpers } from '../cards';
+import { Btn, Chip, CooldownClock, Icon, Pill, Sheet, Skeleton } from '../kit';
+import { PointsBadge, StopRow, SaveButton, useHelpers } from '../cards';
 import { formatDistance } from '@/lib/geo';
 import { hoursLabel, stopIsOpen } from '@/lib/recommend';
 import { cn } from '@/lib/utils';
 import { AlohaStop } from '@/data/types';
 import { DEMO_LOCATIONS } from '@/data/seed';
+import CheckIn from './CheckIn';
 
 
 const FILTERS = [
   { id: 'nearby', label: 'Nearby', icon: 'LocateFixed' },
+  { id: 'inrange', label: 'In range', icon: 'Sparkles' },
+  { id: 'hunts', label: 'Hunts', icon: 'Flag' },
+  { id: 'saved', label: 'Saved', icon: 'Heart' },
   { id: 'cat_food', label: 'Food', icon: 'UtensilsCrossed' },
   { id: 'cat_coffee', label: 'Coffee', icon: 'Coffee' },
   { id: 'cat_dessert', label: 'Dessert', icon: 'IceCream2' },
@@ -27,7 +31,7 @@ const FILTERS = [
 ];
 
 const Explore: React.FC = () => {
-  const { db, go, coords, locStatus, distanceTo, requestLocation, demoLabel, setDemoLocation } = useAloha();
+  const { db, go, coords, locStatus, distanceTo, requestLocation, demoLabel, setDemoLocation, stopEligibility, isFavorite } = useAloha();
   const h = useHelpers();
   const [view, setView] = useState<'map' | 'list'>('map');
   const [filters, setFilters] = useState<string[]>([]);
@@ -35,6 +39,12 @@ const Explore: React.FC = () => {
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showLocSheet, setShowLocSheet] = useState(false);
+  const [checkStopId, setCheckStopId] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const toggle = (id: string) => setFilters((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
@@ -51,6 +61,9 @@ const Explore: React.FC = () => {
     if (filters.includes('rewards')) list = list.filter((s) => db.rewards.some((r) => r.stop_id === s.id && r.status === 'approved'));
     if (filters.includes('passport')) list = list.filter((s) => !!s.passport_stamp_id);
     if (filters.includes('drops')) list = list.filter((s) => liveDropStops.has(s.id));
+    if (filters.includes('hunts')) list = list.filter((s) => activeHuntStops.has(s.id));
+    if (filters.includes('saved')) list = list.filter((s) => isFavorite('stop', s.id));
+    if (filters.includes('inrange')) list = list.filter((s) => stopEligibility(s).inRange);
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter((s) =>
@@ -62,9 +75,13 @@ const Explore: React.FC = () => {
       list = list.filter((s) => (distanceTo(s.coords) ?? 1e9) < 12000);
     }
     return list.sort((a, b) => (distanceTo(a.coords) ?? 1e9) - (distanceTo(b.coords) ?? 1e9));
-  }, [db.stops, db.rewards, filters, query, coords, distanceTo, liveDropStops, h]);
+  }, [db.stops, db.rewards, filters, query, coords, distanceTo, liveDropStops, activeHuntStops, h, isFavorite, stopEligibility]);
+
+  const inRangeIds = useMemo(() => new Set(visible.filter((s) => stopEligibility(s).inRange).map((s) => s.id)), [visible, stopEligibility, nowTick]);
+  const cooldownIds = useMemo(() => new Set(visible.filter((s) => stopEligibility(s).interactionCooling).map((s) => s.id)), [visible, stopEligibility, nowTick]);
 
   const selectedStop = selected ? db.stops.find((s) => s.id === selected) : null;
+  const checkStop = checkStopId ? db.stops.find((s) => s.id === checkStopId) : null;
   const nearestRegion = useMemo(() => {
     if (!visible.length) {
       const alt = db.stops.filter((s) => s.status === 'approved')[0];
@@ -90,6 +107,8 @@ const Explore: React.FC = () => {
           onSelect={(id) => setSelected(id)}
           categoryIcon={(cid) => h.category(cid)?.icon ?? 'MapPin'}
           regionLabels={db.regions.map((r) => ({ name: r.name, center: r.center }))}
+          inRangeIds={inRangeIds}
+          cooldownIds={cooldownIds}
         />
       ) : (
         <div className="bg-[#FBF7F0] pb-8 pt-[168px]">
@@ -209,8 +228,15 @@ const Explore: React.FC = () => {
 
       {/* selected stop bottom sheet */}
       <Sheet open={!!selectedStop} onClose={() => setSelected(null)} label="Aloha Stop preview">
-        {selectedStop && <StopPreview stop={selectedStop} onOpen={() => { const id = selectedStop.id; setSelected(null); go({ name: 'stop', id }); }} />}
+        {selectedStop && (
+          <StopPreview
+            stop={selectedStop}
+            onOpen={() => { const id = selectedStop.id; setSelected(null); go({ name: 'stop', id }); }}
+            onCollect={() => { const id = selectedStop.id; setSelected(null); setCheckStopId(id); }}
+          />
+        )}
       </Sheet>
+      {checkStop && <CheckIn stop={checkStop} open={!!checkStop} onClose={() => setCheckStopId(null)} />}
 
       {/* location settings sheet */}
       <Sheet open={showLocSheet} onClose={() => setShowLocSheet(false)} label="Location options">
@@ -246,9 +272,11 @@ const Explore: React.FC = () => {
 };
 
 const MapLegend: React.FC = () => (
-  <div className="flex items-center gap-2.5 rounded-2xl bg-[#031A27]/75 px-3 py-2 backdrop-blur ring-1 ring-white/10">
+  <div className="flex flex-wrap items-center gap-2.5 rounded-2xl bg-[#031A27]/75 px-3 py-2 backdrop-blur ring-1 ring-white/10">
     {[
       ['#1FA9A3', 'Stops'],
+      ['#E7C577', 'In range'],
+      ['#6B7C86', 'Cooldown'],
       ['#D4A853', 'Hunts'],
       ['#FF6F59', 'Drops'],
     ].map(([c, l]) => (
@@ -259,14 +287,15 @@ const MapLegend: React.FC = () => (
   </div>
 );
 
-const StopPreview: React.FC<{ stop: AlohaStop; onOpen: () => void }> = ({ stop, onOpen }) => {
-  const { db, distanceTo } = useAloha();
+const StopPreview: React.FC<{ stop: AlohaStop; onOpen: () => void; onCollect: () => void }> = ({ stop, onOpen, onCollect }) => {
+  const { db, distanceTo, stopEligibility, coords } = useAloha();
   const h = useHelpers();
   const open = stopIsOpen(stop);
   const drop = db.drops.find((d) => d.stop_id === stop.id && d.status === 'live');
   const reward = db.rewards.find((r) => r.stop_id === stop.id && r.status === 'approved');
   const huntStop = db.huntStops.find((hs) => hs.stop_id === stop.id);
   const hunt = huntStop ? db.hunts.find((x) => x.id === huntStop.hunt_id) : undefined;
+  const elig = stopEligibility(stop);
   return (
     <div className="px-4 pb-3 pt-2">
       <div className="relative overflow-hidden rounded-3xl">
@@ -310,7 +339,25 @@ const StopPreview: React.FC<{ stop: AlohaStop; onOpen: () => void }> = ({ stop, 
         {drop && <Pill tone="gold" icon="Zap">+{drop.points} drop bonus</Pill>}
       </div>
 
-      <Btn full size="lg" variant="primary" className="mt-4" icon="ArrowRight" onClick={onOpen}>View Aloha Stop</Btn>
+      {elig.interactionCooling && elig.interactionReadyAt && (
+        <div className="mt-3 rounded-2xl bg-[#062B3F] px-3 py-2.5 text-center text-white">
+          <CooldownClock until={elig.interactionReadyAt} prefix="Available again in " className="text-[14px] font-black text-[#E7C577]" />
+        </div>
+      )}
+      {elig.inRange && !elig.interactionCooling && (
+        <p className="mt-3 text-center text-[12px] font-extrabold text-[#1FA9A3]">You’re in range — this Stop is glowing</p>
+      )}
+      {!elig.inRange && coords && !elig.interactionCooling && (
+        <p className="mt-3 text-center text-[12px] font-bold text-[#0B4F6C]/60">Get within {stop.geofence_m} m to collect</p>
+      )}
+
+      <div className="mt-3 flex gap-2">
+        <Btn full size="lg" variant={elig.inRange && elig.canInteract ? 'coral' : 'primary'} icon={elig.interactionCooling ? 'Clock' : elig.inRange ? 'Sparkles' : 'MapPin'}
+          onClick={onCollect}>
+          {elig.interactionCooling ? 'Cooling down' : elig.inRange ? 'You’re here — Collect' : 'Get closer'}
+        </Btn>
+        <Btn size="lg" variant="outline" icon="ArrowRight" onClick={onOpen}>View</Btn>
+      </div>
     </div>
   );
 };

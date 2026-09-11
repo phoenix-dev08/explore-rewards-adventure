@@ -93,6 +93,8 @@ export interface PointRule {
   label: string;
   points: number;
   cooldown_hours: number;
+  /** Minutes before the same user may interact with a Stop again. Separate from points eligibility. */
+  interaction_cooldown_min?: number;
   max_per_location_per_week: number;
   daily_cap: number;
   weekly_cap: number;

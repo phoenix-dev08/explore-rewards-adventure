@@ -142,10 +142,10 @@ export const DropDetail: React.FC<{ id: string }> = ({ id }) => {
       <div className="sticky bottom-0 z-30 mt-6 border-t border-black/5 bg-[#FBF7F0]/95 px-4 pb-4 pt-3 backdrop-blur-xl">
 
         <div className="flex gap-2">
-          <Btn className="flex-1" size="lg" variant="coral" icon="CircleCheckBig"
+          <Btn className="flex-1" size="lg" variant="coral" icon="Sparkles"
             disabled={st.claimedByUser || st.soldOut || drop.status !== 'live'}
             onClick={() => go({ name: 'stop', id: stop.id })}>
-            {st.claimedByUser ? 'Already claimed' : drop.status !== 'live' ? 'Not live yet' : 'Check in to qualify'}
+            {st.claimedByUser ? 'Already claimed' : drop.status !== 'live' ? 'Not live yet' : 'Collect at this Stop'}
           </Btn>
           <Btn size="lg" variant="outline" icon="Navigation"
             onClick={() => window.open(`https://maps.google.com/?q=${stop.coords.lat},${stop.coords.lng}`, '_blank')}>

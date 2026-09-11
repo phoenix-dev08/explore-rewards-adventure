@@ -92,7 +92,7 @@ const FlagshipCard: React.FC<{ huntId: string }> = ({ huntId }) => {
 };
 
 export const HuntDetail: React.FC<{ id: string }> = ({ id }) => {
-  const { db, back, go, startHunt, coords } = useAloha();
+  const { db, back, go, startHunt, coords, stopEligibility } = useAloha();
   const h = useHelpers();
   const hunt = db.hunts.find((x) => x.id === id);
   if (!hunt) return <div className="p-10 text-center">Hunt not found.</div>;
@@ -104,6 +104,9 @@ export const HuntDetail: React.FC<{ id: string }> = ({ id }) => {
   const pct = (doneCount / Math.max(1, required.length)) * 100;
   const complete = prog?.status === 'completed';
   const routeIds = stops.map((s) => s.stop_id);
+  const huntStopRecords = db.stops.filter((s) => routeIds.includes(s.id));
+  const inRangeIds = new Set(huntStopRecords.filter((s) => stopEligibility(s).inRange).map((s) => s.id));
+  const cooldownIds = new Set(huntStopRecords.filter((s) => stopEligibility(s).interactionCooling).map((s) => s.id));
 
   return (
     <div className="min-h-full bg-[#FBF7F0] pb-32">
@@ -177,7 +180,7 @@ export const HuntDetail: React.FC<{ id: string }> = ({ id }) => {
           <SectionTitle title="Route" sub="Stops can be completed in any order unless noted" />
           <Card className="relative h-52 overflow-hidden">
             <MapCanvas
-              stops={db.stops.filter((s) => routeIds.includes(s.id))}
+              stops={huntStopRecords}
               drops={db.drops}
               huntStopIds={new Set(routeIds)}
               userCoords={coords}
@@ -185,6 +188,8 @@ export const HuntDetail: React.FC<{ id: string }> = ({ id }) => {
               categoryIcon={(cid) => h.category(cid)?.icon ?? 'MapPin'}
               routeStopIds={routeIds}
               compact
+              inRangeIds={inRangeIds}
+              cooldownIds={cooldownIds}
             />
           </Card>
         </div>

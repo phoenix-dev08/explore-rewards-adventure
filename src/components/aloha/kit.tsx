@@ -300,6 +300,32 @@ export const Countdown: React.FC<{ to: string; className?: string; prefix?: stri
   );
 };
 
+/** Interaction cooldown clock — “Available again in 14:59” */
+export const CooldownClock: React.FC<{ until: Date | string | null; prefix?: string; className?: string; endedLabel?: string }> = ({
+  until, prefix = 'Available again in ', className, endedLabel = 'Available now',
+}) => {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => force((n) => n + 1), 250);
+    return () => window.clearInterval(t);
+  }, []);
+  if (!until) return null;
+  const ms = new Date(until).getTime() - Date.now();
+  if (ms <= 0) return <span className={className}>{endedLabel}</span>;
+  const total = Math.ceil(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const clock = h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+  return (
+    <span className={cn('font-mono tabular-nums', className)}>
+      {prefix}{clock}
+    </span>
+  );
+};
+
 export const StatTile: React.FC<{ label: string; value: React.ReactNode; icon: string; tone?: string }> = ({ label, value, icon, tone = C.aqua }) => (
   <div className="rounded-2xl border border-black/5 bg-white p-3.5 shadow-[0_10px_26px_-24px_rgba(6,43,63,.6)]">
     <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: `${tone}1A` }}>

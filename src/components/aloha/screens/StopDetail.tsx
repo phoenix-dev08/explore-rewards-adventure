@@ -1,21 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAloha } from '@/store/AlohaStore';
-import { Btn, Card, Countdown, HeaderBar, Icon, Pill, SectionTitle } from '../kit';
+import { Btn, Card, CooldownClock, Countdown, HeaderBar, Icon, Pill, SectionTitle } from '../kit';
 import { SaveButton, useHelpers } from '../cards';
 import { formatDistance } from '@/lib/geo';
 import { hoursLabel, stopIsOpen } from '@/lib/recommend';
-import { checkInEligibility } from '@/lib/engine';
 import CheckIn from './CheckIn';
 import { cn } from '@/lib/utils';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const StopDetail: React.FC<{ id: string }> = ({ id }) => {
-  const { db, back, go, distanceTo, toast } = useAloha();
+  const { db, back, go, distanceTo, toast, stopEligibility } = useAloha();
   const helpers = useHelpers();
   const [img, setImg] = useState(0);
   const [checkOpen, setCheckOpen] = useState(false);
   const [showHours, setShowHours] = useState(false);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const stop = db.stops.find((s) => s.id === id);
   if (!stop) return <div className="p-10 text-center text-[#0B4F6C]">Aloha Stop not found.</div>;
@@ -24,7 +28,7 @@ const StopDetail: React.FC<{ id: string }> = ({ id }) => {
   const cat = helpers.category(stop.category_id);
   const region = helpers.region(stop.region_id);
   const open = stopIsOpen(stop);
-  const elig = checkInEligibility(db as never, stop);
+  const elig = stopEligibility(stop);
   const stamp = stop.passport_stamp_id ? db.stampDefs.find((s) => s.id === stop.passport_stamp_id) : null;
   const owned = stamp ? db.stamps.some((s) => s.stamp_id === stamp.id) : false;
   const stopRewards = db.rewards.filter((r) => r.stop_id === stop.id && r.status === 'approved');
@@ -105,7 +109,9 @@ const StopDetail: React.FC<{ id: string }> = ({ id }) => {
             <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/60">Earn here</p>
             <p className="mt-1 text-[26px] font-black leading-none">+{elig.points}</p>
             <p className="text-[11.5px] font-bold text-white/70">Aloha Points per verified visit</p>
-            <p className="mt-2 text-[10.5px] text-white/45">{elig.rule.label} · cooldown {elig.rule.cooldown_hours}h</p>
+            <p className="mt-2 text-[10.5px] text-white/45">
+              {elig.rule.label} · points every {elig.rule.cooldown_hours}h · interact every {elig.interactionMinutes}m
+            </p>
           </div>
           <div className={cn('rounded-3xl p-4', owned ? 'bg-[#2F855A]/12 ring-1 ring-[#2F855A]/25' : 'bg-[#D4A853]/14 ring-1 ring-[#D4A853]/30')}>
             <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#8A6414]">Passport</p>
@@ -227,9 +233,25 @@ const StopDetail: React.FC<{ id: string }> = ({ id }) => {
 
       {/* sticky actions */}
       <div className="sticky bottom-0 z-30 mt-6 border-t border-black/5 bg-[#FBF7F0]/95 px-4 pb-4 pt-3 backdrop-blur-xl">
-
+        {elig.interactionCooling && elig.interactionReadyAt && (
+          <p className="mb-2 text-center text-[12px] font-extrabold text-[#0B4F6C]/70">
+            <CooldownClock until={elig.interactionReadyAt} prefix="Available again in " />
+          </p>
+        )}
+        {elig.inRange && !elig.interactionCooling && (
+          <p className="mb-2 text-center text-[12px] font-extrabold text-[#1FA9A3]">You’re in range — tap Collect</p>
+        )}
+        {!elig.inRange && !elig.interactionCooling && (
+          <p className="mb-2 text-center text-[12px] font-bold text-[#0B4F6C]/55">
+            Get within {stop.geofence_m} m to collect · {formatDistance(distanceTo(stop.coords))}
+          </p>
+        )}
         <div className="flex gap-2">
-          <Btn className="flex-1" size="lg" variant="coral" icon="CircleCheckBig" onClick={() => setCheckOpen(true)}>Check In</Btn>
+          <Btn className="flex-1" size="lg" variant={elig.inRange && elig.canInteract ? 'coral' : 'primary'}
+            icon={elig.interactionCooling ? 'Clock' : elig.inRange ? 'Sparkles' : 'MapPin'}
+            onClick={() => setCheckOpen(true)}>
+            {elig.interactionCooling ? 'Cooling down' : elig.inRange ? 'You’re here — Collect' : 'Get closer'}
+          </Btn>
           <Btn size="lg" variant="outline" icon="Navigation" onClick={() => window.open(`https://maps.google.com/?q=${stop.coords.lat},${stop.coords.lng}`, '_blank')}>Directions</Btn>
           <SaveButton type="stop" id={stop.id} className="h-[52px] w-[52px] rounded-2xl" />
         </div>
