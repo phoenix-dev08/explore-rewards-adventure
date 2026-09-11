@@ -79,6 +79,90 @@ const Explore: React.FC = () => {
 
   const inRangeIds = useMemo(() => new Set(visible.filter((s) => stopEligibility(s).inRange).map((s) => s.id)), [visible, stopEligibility, nowTick]);
   const cooldownIds = useMemo(() => new Set(visible.filter((s) => stopEligibility(s).interactionCooling).map((s) => s.id)), [visible, stopEligibility, nowTick]);
+  const cooldownUntil = useMemo(() => {
+    const rec: Record<string, string> = {};
+    visible.forEach((s) => {
+      const e = stopEligibility(s);
+      if (e.interactionCooling && e.interactionReadyAt) rec[s.id] = e.interactionReadyAt.toISOString();
+    });
+    return rec;
+  }, [visible, stopEligibility, nowTick]);
+  const ownedStamps = useMemo(() => new Set(db.stamps.map((s) => s.stamp_id)), [db.stamps]);
+  const passportStopIds = useMemo(
+    () => new Set(visible.filter((s) => s.passport_stamp_id && !ownedStamps.has(s.passport_stamp_id)).map((s) => s.id)),
+    [visible, ownedStamps],
+  );
+  const rewardStopIds = useMemo(
+    () => new Set(visible.filter((s) => db.rewards.some((r) => r.stop_id === s.id && r.status === 'approved')).map((s) => s.id)),
+    [visible, db.rewards],
+  );
+
+  const questHint = useMemo(() => {
+    const here = visible.find((s) => {
+      const e = stopEligibility(s);
+      return e.inRange && e.canInteract;
+    });
+    if (here) {
+      return { icon: 'Sparkles', eyebrow: 'You’re here', text: `Collect ${here.name} — this Aloha Stop is glowing.`, onClick: () => setSelected(here.id) };
+    }
+
+    const nearbyDrop = db.drops
+      .filter((d) => d.status === 'live')
+      .map((d) => {
+        const stop = db.stops.find((s) => s.id === d.stop_id);
+        return { d, stop, dist: stop ? distanceTo(stop.coords) : null };
+      })
+      .filter((x) => x.stop && x.dist != null && x.dist < 9000)
+      .sort((a, b) => (a.dist ?? 1e9) - (b.dist ?? 1e9))[0];
+    if (nearbyDrop?.d) {
+      return { icon: 'Zap', eyebrow: 'Aloha Drop nearby', text: `There's an Aloha Drop nearby! ${nearbyDrop.d.title}`, onClick: () => go({ name: 'drop', id: nearbyDrop.d.id }) };
+    }
+
+    const huntHint = db.huntProgress
+      .filter((p) => p.status === 'in_progress')
+      .map((p) => {
+        const hunt = db.hunts.find((x) => x.id === p.hunt_id);
+        const req = db.huntStops.filter((hs) => hs.hunt_id === p.hunt_id && hs.required);
+        const left = req.filter((hs) => !p.completed_stop_ids.includes(hs.stop_id)).length;
+        return { hunt, left, total: req.length };
+      })
+      .filter((x) => x.hunt && x.left > 0)
+      .sort((a, b) => a.left - b.left)[0];
+    if (huntHint?.hunt && huntHint.left <= 3) {
+      return {
+        icon: 'Flag',
+        eyebrow: huntHint.hunt.name,
+        text: huntHint.left === 1 ? 'One more Stop to finish this Hunt.' : `We only need ${huntHint.left} more Stops to finish this Hunt.`,
+        onClick: () => go({ name: 'hunt', id: huntHint.hunt!.id }),
+      };
+    }
+
+    const regionAlmost = db.regions
+      .map((r) => {
+        const defs = db.stampDefs.filter((d) => d.region_id === r.id);
+        const got = defs.filter((d) => ownedStamps.has(d.id)).length;
+        return { r, got, left: defs.length - got };
+      })
+      .filter((x) => x.got > 0 && x.left > 0 && x.left <= 2)
+      .sort((a, b) => a.left - b.left)[0];
+    if (regionAlmost) {
+      return {
+        icon: 'Stamp',
+        eyebrow: `${regionAlmost.r.name} Passport`,
+        text: `We're almost done with our ${regionAlmost.r.name} Passport.`,
+        onClick: () => go({ name: 'region', id: regionAlmost.r.id }),
+      };
+    }
+
+    const next = visible.find((s) => {
+      const e = stopEligibility(s);
+      return !e.interactionCooling;
+    });
+    if (next) {
+      return { icon: 'MapPin', eyebrow: 'Aloha Stop nearby', text: "There's an Aloha Stop over there. Let's go get it.", onClick: () => setSelected(next.id) };
+    }
+    return null;
+  }, [visible, stopEligibility, db.drops, db.stops, db.huntProgress, db.hunts, db.huntStops, db.regions, db.stampDefs, ownedStamps, distanceTo, go]);
 
   const selectedStop = selected ? db.stops.find((s) => s.id === selected) : null;
   const checkStop = checkStopId ? db.stops.find((s) => s.id === checkStopId) : null;
@@ -109,6 +193,9 @@ const Explore: React.FC = () => {
           regionLabels={db.regions.map((r) => ({ name: r.name, center: r.center }))}
           inRangeIds={inRangeIds}
           cooldownIds={cooldownIds}
+          cooldownUntil={cooldownUntil}
+          passportStopIds={passportStopIds}
+          rewardStopIds={rewardStopIds}
         />
       ) : (
         <div className="bg-[#FBF7F0] pb-8 pt-[168px]">
@@ -200,7 +287,16 @@ const Explore: React.FC = () => {
       {view === 'map' && (
         <>
           <div className="absolute bottom-4 left-4 right-4 z-20 flex items-end justify-between gap-3">
-            <div className="space-y-2">
+            <div className="min-w-0 flex-1 space-y-2">
+              {questHint && !selectedStop && (
+                <button onClick={questHint.onClick} className="flex w-full max-w-[280px] items-start gap-2 rounded-2xl bg-[#031A27]/88 px-3 py-2.5 text-left text-white shadow-lg ring-1 ring-white/10 backdrop-blur">
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#1FA9A3]/25"><Icon name={questHint.icon} className="h-3.5 w-3.5 text-[#8FE3DC]" /></span>
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-[#8FE3DC]">{questHint.eyebrow}</span>
+                    <span className="block text-[12.5px] font-extrabold leading-snug">{questHint.text}</span>
+                  </span>
+                </button>
+              )}
               {db.drops.filter((d) => d.status === 'live').slice(0, 1).map((d) => (
                 <button key={d.id} onClick={() => go({ name: 'drop', id: d.id })} className="flex items-center gap-2 rounded-2xl bg-gradient-to-br from-[#FF9E4A] to-[#FF6F59] px-3 py-2.5 text-left text-white shadow-[0_16px_36px_-16px_rgba(255,111,89,.9)]">
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/25"><Icon name="Zap" className="h-4 w-4" /></span>
@@ -210,9 +306,7 @@ const Explore: React.FC = () => {
                   </span>
                 </button>
               ))}
-              <div className="flex gap-2">
-                <MapLegend />
-              </div>
+              <MapLegend />
             </div>
             <button
               onClick={() => go({ name: 'surprise' })}
@@ -272,13 +366,15 @@ const Explore: React.FC = () => {
 };
 
 const MapLegend: React.FC = () => (
-  <div className="flex flex-wrap items-center gap-2.5 rounded-2xl bg-[#031A27]/75 px-3 py-2 backdrop-blur ring-1 ring-white/10">
+  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-2xl bg-[#031A27]/75 px-3 py-2 backdrop-blur ring-1 ring-white/10">
     {[
-      ['#1FA9A3', 'Stops'],
-      ['#E7C577', 'In range'],
+      ['#1FA9A3', 'Available'],
+      ['#6B8A99', 'Too far'],
       ['#6B7C86', 'Cooldown'],
-      ['#D4A853', 'Hunts'],
-      ['#FF6F59', 'Drops'],
+      ['#D4A853', 'Hunt'],
+      ['#C9A227', 'Passport'],
+      ['#FF6F59', 'Drop'],
+      ['#FF8A7A', 'Reward'],
     ].map(([c, l]) => (
       <span key={l} className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-white/80">
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: c }} />{l}
@@ -334,9 +430,13 @@ const StopPreview: React.FC<{ stop: AlohaStop; onOpen: () => void; onCollect: ()
       </div>
 
       <div className="mt-2.5 flex flex-wrap gap-1.5">
-        {reward && <Pill tone="coral" icon="Gift">{reward.point_cost} pt reward</Pill>}
-        {hunt && <Pill tone="aqua" icon="Flag">{hunt.name}</Pill>}
-        {drop && <Pill tone="gold" icon="Zap">+{drop.points} drop bonus</Pill>}
+        {elig.inRange && elig.canInteract && <Pill tone="gold" icon="Sparkles">Available — collect</Pill>}
+        {!elig.inRange && coords && !elig.interactionCooling && <Pill tone="slate" icon="Lock">Too far away</Pill>}
+        {elig.interactionCooling && <Pill tone="dark" icon="Clock">Cooldown</Pill>}
+        {hunt && <Pill tone="aqua" icon="Flag">Hunt Stop</Pill>}
+        {stop.passport_stamp_id && <Pill tone="gold" icon="Stamp">Passport Stop</Pill>}
+        {drop && <Pill tone="coral" icon="Zap">Active Aloha Drop</Pill>}
+        {reward && <Pill tone="coral" icon="Gift">Reward available</Pill>}
       </div>
 
       {elig.interactionCooling && elig.interactionReadyAt && (

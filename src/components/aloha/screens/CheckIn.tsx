@@ -286,8 +286,9 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
 };
 
 const Success: React.FC<{ stop: AlohaStop; result: CheckInResult; onClose: () => void; onPassport: () => void }> = ({ stop, result, onClose, onPassport }) => {
-  const { db } = useAloha();
+  const { db, stopEligibility } = useAloha();
   const h = useHelpers();
+  const elig = stopEligibility(stop);
   const stamp = result.stampId ? db.stampDefs.find((s) => s.id === result.stampId) : null;
   const completedHunt = result.huntProgressed?.find((x) => x.completed);
   const hunt = completedHunt ? db.hunts.find((x) => x.id === completedHunt.huntId) : null;
@@ -314,17 +315,24 @@ const Success: React.FC<{ stop: AlohaStop; result: CheckInResult; onClose: () =>
         <div className="animate-[ah-pop_.6s_cubic-bezier(.2,1.4,.4,1)] rounded-[28px] bg-gradient-to-br from-[#1FA9A3] to-[#0B4F6C] p-5 shadow-[0_24px_50px_-20px_rgba(11,79,108,.9)]">
           <Icon name="Check" className="h-10 w-10 text-white" strokeWidth={3} />
         </div>
-        <h2 className="mt-4 text-[34px] font-black tracking-[0.14em] text-[#062B3F]">ALOHA!</h2>
-        <p className="text-[13px] font-bold uppercase tracking-[0.2em] text-[#1FA9A3]">
-          {result.soft ? 'Stop collected' : 'Visit verified'}
-        </p>
+        <p className="mt-4 text-[12px] font-black uppercase tracking-[0.22em] text-[#1FA9A3]">🌺 Aloha Stop collected</p>
+        <h2 className="mt-1 text-center text-[28px] font-black leading-tight tracking-tight text-[#062B3F]">
+          ALOHA STOP COLLECTED!
+        </h2>
+        <p className="mt-1 text-[13px] font-bold text-[#0B4F6C]/60">{stop.name}</p>
 
         <div className="mt-5 w-full rounded-3xl bg-white p-5 shadow-[0_18px_44px_-26px_rgba(6,43,63,.6)]">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-bold text-[#0B4F6C]/65">{stop.name}</span>
-            <span className="text-[26px] font-black text-[#062B3F]">+{result.points ?? 0}</span>
+            <span className="text-[13px] font-bold text-[#0B4F6C]/65">
+              {(result.points ?? 0) > 0 ? 'Aloha Points' : result.soft ? 'Visit recorded' : 'Stop collected'}
+            </span>
+            <span className="text-[26px] font-black text-[#062B3F]">
+              {(result.points ?? 0) > 0 ? `+${result.points}` : hunt ? 'Hunt complete' : '—'}
+            </span>
           </div>
-          <p className="text-right text-[11px] font-black uppercase tracking-wide text-[#0B4F6C]/45">Aloha Points</p>
+          {(result.points ?? 0) > 0 && (
+            <p className="text-right text-[11px] font-black uppercase tracking-wide text-[#0B4F6C]/45">Aloha Points</p>
+          )}
           {result.soft && result.detail && (
             <p className="mt-2 text-[12.5px] leading-relaxed text-[#0B4F6C]/65">{result.detail}</p>
           )}
@@ -363,15 +371,27 @@ const Success: React.FC<{ stop: AlohaStop; result: CheckInResult; onClose: () =>
             const hh = db.hunts.find((x) => x.id === p.huntId);
             const prog = db.huntProgress.find((x) => x.hunt_id === p.huntId);
             const req = db.huntStops.filter((x) => x.hunt_id === p.huntId && x.required).length;
+            const done = prog?.completed_stop_ids.length ?? 0;
             if (!hh) return null;
             return (
-              <div key={p.huntId} className="mt-3 flex items-center gap-2.5 rounded-2xl bg-[#1FA9A3]/10 p-3">
-                <Icon name="Flag" className="h-4 w-4 text-[#0B6B67]" />
-                <span className="flex-1 text-[12.5px] font-bold text-[#062B3F]">{hh.name}</span>
-                <span className="text-[12px] font-black text-[#0B6B67]">{prog?.completed_stop_ids.length ?? 0}/{req}</span>
+              <div key={p.huntId} className="mt-3 rounded-2xl bg-[#1FA9A3]/10 p-3">
+                <div className="flex items-center gap-2.5">
+                  <Icon name="Flag" className="h-4 w-4 text-[#0B6B67]" />
+                  <span className="flex-1 text-[12.5px] font-extrabold text-[#062B3F]">{hh.name}: {done}/{req} Stops Completed</span>
+                </div>
+                <p className="mt-1 text-[11.5px] font-bold text-[#0B6B67]">
+                  {req - done === 0 ? 'Hunt complete' : `Only ${req - done} more Stop${req - done === 1 ? '' : 's'} to finish this Hunt.`}
+                </p>
               </div>
             );
           })}
+
+          {elig.interactionReadyAt && (
+            <div className="mt-3 rounded-2xl bg-[#062B3F] px-3 py-3 text-center text-white">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/50">This Stop is cooling down</p>
+              <CooldownClock until={elig.interactionReadyAt} prefix="Available again in " className="text-[20px] font-black text-[#E7C577]" />
+            </div>
+          )}
 
           <div className="mt-4 border-t border-dashed border-[#0B4F6C]/12 pt-3 text-center">
             <p className="text-[11px] font-black uppercase tracking-wide text-[#0B4F6C]/45">New balance</p>

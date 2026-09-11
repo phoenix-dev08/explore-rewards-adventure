@@ -4,7 +4,7 @@ import type { StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { AlohaDrop, AlohaStop, LatLng } from '@/data/types';
 import { OAHU_CENTER, OAHU_MAX_BOUNDS, geofenceRing } from '@/lib/geo';
-import { Icon } from './kit';
+import { CooldownClock, Icon } from './kit';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -20,6 +20,9 @@ interface Props {
   regionLabels?: { name: string; center: LatLng }[];
   inRangeIds?: Set<string>;
   cooldownIds?: Set<string>;
+  cooldownUntil?: Record<string, string>;
+  passportStopIds?: Set<string>;
+  rewardStopIds?: Set<string>;
 }
 
 /** OpenStreetMap raster — real streets, no API key. */
@@ -42,7 +45,7 @@ const OSM_STYLE: StyleSpecification = {
 
 const MapCanvas: React.FC<Props> = ({
   stops, drops, huntStopIds, selectedId, userCoords, onSelect, categoryIcon, routeStopIds, compact,
-  inRangeIds, cooldownIds,
+  inRangeIds, cooldownIds, cooldownUntil, passportStopIds, rewardStopIds,
 }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -255,16 +258,36 @@ const MapCanvas: React.FC<Props> = ({
             if (!p) return null;
             const isDrop = dropStopIds.has(s.id);
             const isHunt = huntStopIds.has(s.id);
+            const isPassport = passportStopIds?.has(s.id);
+            const isReward = rewardStopIds?.has(s.id);
             const active = selectedId === s.id;
             const inRange = inRangeIds?.has(s.id);
             const cooling = cooldownIds?.has(s.id);
             const outOfRange = !!userCoords && !inRange && !cooling;
+            const until = cooldownUntil?.[s.id];
+            const pinBg = cooling
+              ? 'linear-gradient(140deg,#6B7C86,#3A4F5C)'
+              : inRange
+                ? 'linear-gradient(140deg,#E7C577,#1FA9A3)'
+                : isDrop
+                  ? 'linear-gradient(140deg,#FF9E4A,#FF6F59)'
+                  : isHunt
+                    ? 'linear-gradient(140deg,#E7C577,#D4A853)'
+                    : 'linear-gradient(140deg,#1FA9A3,#0B4F6C)';
+            const stem = cooling ? '#3A4F5C' : inRange ? '#1FA9A3' : isDrop ? '#FF6F59' : isHunt ? '#D4A853' : '#0B4F6C';
+            const label = cooling
+              ? 'Cooldown'
+              : inRange
+                ? 'You’re here — collect'
+                : outOfRange
+                  ? 'Too far to collect'
+                  : s.name;
             return (
               <button
                 key={s.id}
                 type="button"
                 onClick={() => onSelect(s.id)}
-                aria-label={s.name}
+                aria-label={`${s.name}. ${label}`}
                 style={{
                   left: p.x,
                   top: p.y,
@@ -272,34 +295,35 @@ const MapCanvas: React.FC<Props> = ({
                 }}
                 className="pointer-events-auto group absolute origin-bottom transition-transform duration-200"
               >
-                {inRange && (
+                {inRange && !cooling && (
                   <>
                     <span className="absolute -inset-5 -z-10 rounded-full bg-[#E7C577]/40 blur-md" style={{ animation: 'ah-swell 1.8s ease-out infinite' }} />
                     <span className="absolute -inset-2 -z-10 rounded-full bg-[#1FA9A3]/45" style={{ animation: 'ah-marker-glow 1.6s ease-in-out infinite' }} />
                   </>
                 )}
-                {isDrop && !inRange && (
+                {isDrop && !inRange && !cooling && (
                   <span className="absolute -inset-3 -z-10 rounded-full bg-[#FF9E4A]/35 blur-md animate-pulse" />
+                )}
+                {cooling && until && !compact && (
+                  <span className="pointer-events-none absolute left-1/2 top-[-22px] -translate-x-1/2 rounded-full bg-[#031A27]/90 px-1.5 py-0.5 font-mono text-[10px] font-black tabular-nums text-[#E7C577] shadow-md">
+                    <CooldownClock until={until} prefix="" />
+                  </span>
                 )}
                 <span
                   className={cn(
                     'relative flex items-center justify-center rounded-full border-[3px] shadow-[0_8px_18px_-4px_rgba(3,26,39,.65)]',
                     compact ? 'h-8 w-8' : 'h-11 w-11',
                     active || inRange ? 'border-white' : 'border-white/85',
-                    cooling && 'opacity-70 grayscale-[.35]',
-                    outOfRange && !isDrop && 'opacity-80',
+                    cooling && 'opacity-65',
+                    outOfRange && !isDrop && 'opacity-85',
                   )}
                   style={{
-                    background: cooling
-                      ? 'linear-gradient(140deg,#6B7C86,#3A4F5C)'
-                      : inRange
-                        ? 'linear-gradient(140deg,#E7C577,#1FA9A3)'
-                        : isDrop
-                          ? 'linear-gradient(140deg,#FF9E4A,#FF6F59)'
-                          : isHunt
-                            ? 'linear-gradient(140deg,#E7C577,#D4A853)'
-                            : 'linear-gradient(140deg,#1FA9A3,#0B4F6C)',
-                    animation: inRange ? 'ah-marker-glow 1.8s ease-in-out infinite' : undefined,
+                    background: pinBg,
+                    animation: inRange && !cooling
+                      ? 'ah-marker-glow 1.8s ease-in-out infinite'
+                      : cooling
+                        ? 'ah-cooldown-dim 2.4s ease-in-out infinite'
+                        : undefined,
                   }}
                 >
                   <Icon
@@ -308,15 +332,21 @@ const MapCanvas: React.FC<Props> = ({
                   />
                   <span
                     className="absolute -bottom-[9px] left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-b-[3px] border-r-[3px] border-white/85"
-                    style={{ background: cooling ? '#3A4F5C' : inRange ? '#1FA9A3' : isDrop ? '#FF6F59' : isHunt ? '#D4A853' : '#0B4F6C' }}
+                    style={{ background: stem }}
                   />
+                  {!compact && (
+                    <span className="absolute -right-1.5 -top-1.5 flex gap-0.5">
+                      {isPassport && <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#D4A853] text-[#3A2A05] ring-2 ring-white"><Icon name="Stamp" className="h-2 w-2" /></span>}
+                      {isReward && <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6F59] text-white ring-2 ring-white"><Icon name="Gift" className="h-2 w-2" /></span>}
+                    </span>
+                  )}
                 </span>
                 {!compact && (
                   <span className={cn(
                     'pointer-events-none absolute left-1/2 top-full mt-2.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#031A27]/85 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur transition-opacity',
-                    active || inRange ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                    active || inRange || cooling ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}>
-                    {cooling ? 'Cooling down' : inRange ? 'You’re here — collect' : s.name}
+                    {cooling && until ? <>Available again in <CooldownClock until={until} prefix="" /></> : label}
                   </span>
                 )}
               </button>

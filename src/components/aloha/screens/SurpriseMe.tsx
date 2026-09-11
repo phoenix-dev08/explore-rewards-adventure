@@ -40,8 +40,8 @@ const STEPS = [
 ] as const;
 
 const MOODS: { v: string; icon: string }[] = [
-  { v: 'food', icon: 'UtensilsCrossed' }, { v: 'adventure', icon: 'Waves' }, { v: 'relaxing', icon: 'Flower2' },
-  { v: 'family', icon: 'Baby' }, { v: 'outdoors', icon: 'Mountain' }, { v: 'shopping', icon: 'ShoppingBag' },
+  { v: 'food', icon: 'UtensilsCrossed' }, { v: 'adventure', icon: 'Waves' }, { v: 'beach', icon: 'Palmtree' },
+  { v: 'relaxing', icon: 'Flower2' }, { v: 'shopping', icon: 'ShoppingBag' }, { v: 'culture', icon: 'Landmark' },
   { v: 'entertainment', icon: 'Music' }, { v: 'romantic', icon: 'Heart' }, { v: 'local', icon: 'MapPin' },
   { v: 'surprise', icon: 'Sparkles' },
 ];
@@ -86,10 +86,10 @@ const SurpriseMe: React.FC = () => {
         </div>
         <h3 className="mt-6 text-[20px] font-black">Building your Aloha Hunt…</h3>
         <p className="mt-2 max-w-xs text-[12.5px] leading-relaxed text-white/60">
-          Matching open Aloha Stops against your budget, time window, companions, mood and current region.
+          Matching nearby Aloha Stops, Hunts, Passport stamps, Aloha Drops, hours, budget and time.
         </p>
         <div className="mt-6 w-full max-w-xs space-y-2">
-          {['Reading region + distance', 'Filtering by operating hours', 'Balancing budget & pacing', 'Sequencing the route'].map((t, i) => (
+          {['Reading location + nearby Stops', 'Checking Hunts, Passport & Drops', 'Filtering hours, budget & time', 'Sequencing a mini itinerary'].map((t, i) => (
             <div key={t} className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-[12px] font-semibold"
               style={{ animation: `ah-rise .5s ease ${i * 0.18}s both` }}>
               <Icon name="Check" className="h-3.5 w-3.5 text-[#8FE3DC]" />{t}
@@ -225,6 +225,11 @@ const Result: React.FC<{ adventure: Adventure; onShuffle: () => void; onBack: ()
                 <p className="truncate text-[14.5px] font-extrabold text-[#062B3F]">{s.name}</p>
                 <p className="truncate text-[12px] font-semibold text-[#0B4F6C]/60">{h.category(s.category_id)?.name} · {hoursLabel(s)}</p>
                 <p className="mt-0.5 text-[11.5px] font-bold text-[#1FA9A3]">+{h.pointsFor(s)} pts · ~{s.avg_minutes} min · {s.avg_spend === 0 ? 'Free' : `$${s.avg_spend}`}</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {s.passport_stamp_id && <span className="rounded-full bg-[#D4A853]/16 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#8A6414]">Passport</span>}
+                  {db.drops.some((d) => d.stop_id === s.id && d.status === 'live') && <span className="rounded-full bg-[#FF6F59]/16 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#B23D2A]">Drop</span>}
+                  {db.huntStops.some((hs) => hs.stop_id === s.id) && <span className="rounded-full bg-[#1FA9A3]/14 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#0B6B67]">Hunt</span>}
+                </div>
               </div>
               <Icon name="ChevronRight" className="h-5 w-5 shrink-0 self-center text-[#0B4F6C]/25" />
             </button>

@@ -21,8 +21,8 @@ export const DropsScreen: React.FC = () => {
             <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/70">How Drops work</p>
           </div>
           <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/70">
-            Drops are partner-funded bursts of bonus points and limited rewards. Qualify with a verified visit inside the
-            Drop window — quantities are decremented server-side, one claim per member.
+            Limited-time, limited-quantity events. First qualifying visitors who collect the Stop inside the window earn the bonus —
+            then it’s gone. One claim per member, decremented server-side.
           </p>
         </div>
 
@@ -78,6 +78,11 @@ export const DropDetail: React.FC<{ id: string }> = ({ id }) => {
           </span>
           <h1 className="mt-2 text-[27px] font-black leading-tight text-white drop-shadow">{drop.title}</h1>
           <p className="text-[13px] font-bold text-white/85">{stop.name} · {formatDistance(distanceTo(stop.coords))}</p>
+          {drop.status === 'live' && (
+            <p className="mt-2 text-[13px] font-extrabold text-[#FFE08A]">
+              First {drop.quantity_total} qualifying visitors today — {st.remaining} left.
+            </p>
+          )}
         </div>
       </div>
 

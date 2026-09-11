@@ -59,6 +59,10 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(231, 197, 119, 0.55), 0 0 18px 6px rgba(31, 169, 163, 0.35); }
   50% { box-shadow: 0 0 0 12px rgba(231, 197, 119, 0), 0 0 28px 10px rgba(31, 169, 163, 0.55); }
 }
+@keyframes ah-cooldown-dim {
+  0%, 100% { filter: grayscale(0.35) brightness(0.92); }
+  50% { filter: grayscale(0.55) brightness(0.78); }
+}
 
 
 @layer base {

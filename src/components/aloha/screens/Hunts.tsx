@@ -190,31 +190,50 @@ export const HuntDetail: React.FC<{ id: string }> = ({ id }) => {
               compact
               inRangeIds={inRangeIds}
               cooldownIds={cooldownIds}
+              cooldownUntil={Object.fromEntries(
+                huntStopRecords
+                  .map((s) => [s.id, stopEligibility(s).interactionReadyAt?.toISOString() ?? ''] as const)
+                  .filter(([, until]) => until),
+              )}
+              passportStopIds={new Set(huntStopRecords.filter((s) => !!s.passport_stamp_id).map((s) => s.id))}
             />
           </Card>
         </div>
 
         <div className="mt-5">
-          <SectionTitle title="Stop sequence" sub={`${required.length} required · ${stops.length - required.length} bonus`} />
-          <div className="space-y-2.5">
+          <SectionTitle title="The trail" sub={`${doneCount} of ${required.length} required · ${stops.length - required.length} bonus`} />
+          <p className="mb-3 text-[13px] font-extrabold text-[#062B3F]">
+            {complete
+              ? 'Hunt complete — bonus Aloha Points are on your ledger.'
+              : doneCount === 0
+                ? `Visit all ${required.length} Aloha Stops to finish this Hunt.`
+                : `We only need ${required.length - doneCount} more Stop${required.length - doneCount === 1 ? '' : 's'} to finish this Hunt.`}
+          </p>
+          <div className="relative space-y-2.5 pl-1">
             {stops.map((hs, i) => {
               const stop = db.stops.find((s) => s.id === hs.stop_id);
               if (!stop) return null;
               const isDone = !!prog?.completed_stop_ids.includes(stop.id);
+              const nextUp = !isDone && !complete && required.find((s) => !prog?.completed_stop_ids.includes(s.stop_id))?.stop_id === stop.id;
               return (
-                <div key={hs.id}>
-                  <StopRow
-                    stop={stop}
-                    index={i + 1}
-                    done={isDone}
-                    onClick={() => go({ name: 'stop', id: stop.id })}
-                    right={
-                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${isDone ? 'bg-[#2F855A]/12 text-[#22633F]' : hs.required ? 'bg-[#0B4F6C]/8 text-[#0B4F6C]' : 'bg-[#D4A853]/16 text-[#8A6414]'}`}>
-                        {isDone ? 'Complete' : hs.required ? 'To do' : 'Bonus'}
-                      </span>
-                    }
-                  />
-                  <p className="mt-1 pl-4 text-[11.5px] italic text-[#0B4F6C]/45">{hs.hint}</p>
+                <div key={hs.id} className="relative">
+                  {i < stops.length - 1 && (
+                    <span className={`absolute left-[18px] top-12 h-[calc(100%-8px)] w-0.5 ${isDone ? 'bg-[#1FA9A3]' : 'bg-[#0B4F6C]/12'}`} />
+                  )}
+                  <div className={nextUp ? 'rounded-3xl ring-2 ring-[#E7C577]/70' : ''}>
+                    <StopRow
+                      stop={stop}
+                      index={i + 1}
+                      done={isDone}
+                      onClick={() => go({ name: 'stop', id: stop.id })}
+                      right={
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${isDone ? 'bg-[#2F855A]/12 text-[#22633F]' : nextUp ? 'bg-[#E7C577] text-[#3A2A05]' : hs.required ? 'bg-[#0B4F6C]/8 text-[#0B4F6C]' : 'bg-[#D4A853]/16 text-[#8A6414]'}`}>
+                          {isDone ? 'Collected' : nextUp ? 'Next' : hs.required ? `Stop ${i + 1}` : 'Bonus'}
+                        </span>
+                      }
+                    />
+                  </div>
+                  <p className="mt-1 pl-12 text-[11.5px] italic text-[#0B4F6C]/45">{hs.hint}</p>
                 </div>
               );
             })}

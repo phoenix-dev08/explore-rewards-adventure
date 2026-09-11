@@ -7,7 +7,7 @@ import {
   Reward, Role, UserHuntProgress, UserProfile, UserStamp,
 } from '@/data/types';
 import { DEMO_LOCATIONS, IMAGES } from '@/data/seed';
-import { checkInEligibility, DEFAULT_INTERACTION_COOLDOWN_MIN, DbState } from '@/lib/engine';
+import { checkInEligibility, DEFAULT_INTERACTION_COOLDOWN_MIN, DbState, uid } from '@/lib/engine';
 import { distanceMeters } from '@/lib/geo';
 import { getDeviceHash, readInteractionCooldownMin, readLocalInteractions, writeInteractionCooldownMin, writeLocalInteraction } from '@/lib/device';
 
@@ -592,7 +592,110 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     localInteractionAt: localInteractions[stop.id] ?? null,
   }), [db, distanceTo, coords, localInteractions]);
 
-  // --- privileged actions via edge functions --------------------------------
+  /** Preview-only collect when the verification edge function is unreachable. */
+  const applyPreviewCollect = useCallback((
+    stop: AlohaStop,
+    elig: ReturnType<typeof checkInEligibility>,
+    method: 'gps' | 'qr',
+    useCoords: LatLng | null | undefined,
+  ): CheckInResult => {
+    const now = new Date().toISOString();
+    const userId = db.user.id;
+    let points = elig.canEarnPoints ? elig.points : 0;
+    const huntProgressed: NonNullable<CheckInResult['huntProgressed']> = [];
+    let stampId: string | null = null;
+    let drop: CheckInResult['drop'] = null;
+
+    recordLocalInteraction(stop.id);
+
+    setDb((prev) => {
+      let balance = prev.user.points_balance;
+      const transactions = [...prev.transactions];
+      const checkIns: CheckIn[] = [...prev.checkIns, {
+        id: uid('chk'), user_id: userId, stop_id: stop.id, method,
+        distance_m: elig.distanceM ?? 0, points_awarded: points, created_at: now,
+        device_hash: getDeviceHash(), status: 'verified',
+      }];
+      const stamps = [...prev.stamps];
+      const huntProgress = prev.huntProgress.map((p) => ({ ...p, completed_stop_ids: [...p.completed_stop_ids] }));
+      const dropClaims = [...prev.dropClaims];
+      const drops = prev.drops.map((d) => ({ ...d }));
+
+      if (points > 0) {
+        balance += points;
+        transactions.unshift({
+          id: uid('txn'), user_id: userId, type: 'checkin', points, label: `Collected ${stop.name}`,
+          ref_id: stop.id, created_at: now, idempotency_key: uid('idem'), balance_after: balance,
+        });
+      }
+
+      if (stop.passport_stamp_id && !elig.stampAlreadyOwned) {
+        stampId = stop.passport_stamp_id;
+        stamps.push({ id: uid('ust'), user_id: userId, stamp_id: stop.passport_stamp_id, earned_at: now });
+      }
+
+      elig.huntsThatCount.filter((h) => !h.already).forEach((h) => {
+        const hunt = prev.hunts.find((x) => x.id === h.huntId);
+        const req = prev.huntStops.filter((hs) => hs.hunt_id === h.huntId && hs.required);
+        let prog = huntProgress.find((p) => p.hunt_id === h.huntId);
+        if (!prog) {
+          prog = { id: uid('hp'), user_id: userId, hunt_id: h.huntId, started_at: now, completed_stop_ids: [], status: 'in_progress' };
+          huntProgress.push(prog);
+        }
+        if (!prog.completed_stop_ids.includes(stop.id)) prog.completed_stop_ids.push(stop.id);
+        const done = req.filter((hs) => prog!.completed_stop_ids.includes(hs.stop_id)).length;
+        const completed = done >= req.length && req.length > 0;
+        let completionPoints = 0;
+        let bonusPoints = 0;
+        if (completed && hunt && prog.status !== 'completed') {
+          prog.status = 'completed';
+          prog.completed_at = now;
+          completionPoints = hunt.completion_points;
+          bonusPoints = hunt.bonus_points;
+          balance += completionPoints + bonusPoints;
+          transactions.unshift({
+            id: uid('txn'), user_id: userId, type: 'hunt_completion',
+            points: completionPoints + bonusPoints, label: `Completed ${hunt.name}`,
+            ref_id: hunt.id, created_at: now, idempotency_key: uid('idem'), balance_after: balance,
+          });
+        }
+        huntProgressed.push({ huntId: h.huntId, completed, completionPoints, bonusPoints });
+      });
+
+      const liveDrop = drops.find((d) => d.stop_id === stop.id && d.status === 'live');
+      if (liveDrop && !dropClaims.some((c) => c.drop_id === liveDrop.id) && liveDrop.quantity_claimed < liveDrop.quantity_total) {
+        drop = { dropId: liveDrop.id, points: liveDrop.points, rewardLabel: liveDrop.reward_label };
+        liveDrop.quantity_claimed += 1;
+        dropClaims.push({ id: uid('dc'), user_id: userId, drop_id: liveDrop.id, created_at: now, points: liveDrop.points });
+        balance += liveDrop.points;
+        points += liveDrop.points;
+        transactions.unshift({
+          id: uid('txn'), user_id: userId, type: 'drop', points: liveDrop.points, label: liveDrop.title,
+          ref_id: liveDrop.id, created_at: now, idempotency_key: uid('idem'), balance_after: balance,
+        });
+      }
+
+      return {
+        ...prev,
+        user: { ...prev.user, points_balance: balance },
+        checkIns, transactions, stamps, huntProgress, dropClaims, drops,
+      };
+    });
+
+    setPointsPulse((n) => n + 1);
+    return {
+      ok: true,
+      points,
+      stampId,
+      huntProgressed,
+      drop,
+      newBalance: undefined,
+      message: 'Aloha Stop collected',
+      detail: 'Preview collect — server verification was unreachable, so this visit was recorded locally for the demo.',
+      distance_m: elig.distanceM ?? (useCoords ? distanceMeters(useCoords, stop.coords) : undefined),
+    };
+  }, [db.user.id, recordLocalInteraction]);
+
   const doCheckIn = useCallback(async (stopId: string, method: 'gps' | 'qr', coordsOverride?: LatLng | null, qrNonce?: string): Promise<CheckInResult> => {
     const useCoords = coordsOverride !== undefined ? coordsOverride : coords;
     const stop = db.stops.find((s) => s.id === stopId);
@@ -634,6 +737,9 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
     });
     if (error || !data) {
+      if (stop && elig && (locStatus === 'demo' || method === 'qr')) {
+        return applyPreviewCollect(stop, elig, method, useCoords);
+      }
       return { ok: false, failure: 'network', message: 'Network problem', detail: 'We could not reach the verification service. Check your connection and try again.' };
     }
     const res = data as CheckInResult;
@@ -646,7 +752,7 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     await refresh();
     return res;
-  }, [coords, refresh, db.stops, stopEligibility, recordLocalInteraction]);
+  }, [coords, refresh, db.stops, stopEligibility, recordLocalInteraction, locStatus, applyPreviewCollect]);
 
   const doRedeem = useCallback(async (rewardId: string): Promise<RedeemResult> => {
     const { data, error } = await supabase.functions.invoke('redeem-reward', {

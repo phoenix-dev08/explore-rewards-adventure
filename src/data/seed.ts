@@ -590,9 +590,10 @@ export const MOOD_OPTIONS = [
 ] as const;
 
 export const MOOD_LABELS: Record<string, string> = {
-  food: 'Food', adventure: 'Adventure', relaxing: 'Relaxing', family: 'Family', outdoors: 'Outdoors',
-  shopping: 'Shopping', entertainment: 'Entertainment', romantic: 'Romantic', local: 'Local experiences',
+  food: 'Food', adventure: 'Adventure', relaxing: 'Relax', family: 'Family', outdoors: 'Outdoors',
+  shopping: 'Shopping', entertainment: 'Entertainment', romantic: 'Romantic', local: 'Culture',
   surprise: 'Surprise me completely', wellness: 'Wellness', free: 'Free', friends: 'Friends',
+  beach: 'Beach', culture: 'Culture',
 };
 
 // Demo GPS positions used when real device GPS is unavailable in preview.

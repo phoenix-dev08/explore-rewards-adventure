@@ -41,8 +41,11 @@ function budgetCeiling(b: AdventurePrefs['budget']) {
 export function scoreStop(stop: AlohaStop, prefs: AdventurePrefs, origin: LatLng | null) {
   let score = 0;
   const moods = prefs.moods.includes('surprise') ? [] : prefs.moods;
-  const overlap = stop.moods.filter((m) => moods.includes(m)).length;
+  const mapped = moods.map((m) => (m === 'beach' ? 'outdoors' : m === 'culture' ? 'local' : m));
+  const overlap = stop.moods.filter((m) => mapped.includes(m) || moods.includes(m)).length;
   score += overlap * 34;
+  if (moods.includes('beach') && (stop.moods.includes('outdoors') || stop.moods.includes('adventure'))) score += 16;
+  if (moods.includes('culture') && stop.moods.includes('local')) score += 16;
   if (moods.length === 0) score += 12;
   if (stop.featured) score += 10;
   score += (stop.rating - 4) * 18;

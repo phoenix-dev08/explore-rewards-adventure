@@ -48,6 +48,38 @@ export const PassportScreen: React.FC = () => {
           </div>
         </div>
 
+        {(() => {
+          const nextRegion = regionRows.filter((r) => r.got > 0 && r.got < r.total).sort((a, b) => (b.got / b.total) - (a.got / a.total))[0];
+          const nextStamp = defs.find((d) => !owned.has(d.id) && (!nextRegion || d.region_id === nextRegion.region.id));
+          if (!nextStamp && !nextRegion) return null;
+          return (
+            <button
+              onClick={() => go(nextRegion ? { name: 'region', id: nextRegion.region.id } : { name: 'passport' })}
+              className="mt-4 flex w-full items-center gap-3 rounded-3xl bg-white p-4 text-left ring-1 ring-[#D4A853]/35 shadow-[0_16px_32px_-24px_rgba(138,100,20,.45)]"
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-dashed border-[#8A6414]/40 bg-[#D4A853]/12">
+                <Icon name={nextStamp?.icon ?? 'Stamp'} className="h-5 w-5 text-[#8A6414]" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-[#8A6414]">Keep exploring</span>
+                <span className="block text-[14.5px] font-extrabold text-[#062B3F]">
+                  {nextRegion && nextRegion.total - nextRegion.got <= 2
+                    ? `We're almost done with our ${nextRegion.region.name} Passport.`
+                    : nextStamp
+                      ? `Next stamp: ${nextStamp.name}`
+                      : 'Collect your first Island Passport stamp'}
+                </span>
+                {nextRegion && (
+                  <span className="block text-[12px] font-bold text-[#0B4F6C]/60">
+                    {nextRegion.got}/{nextRegion.total} {nextRegion.region.name} stamps
+                  </span>
+                )}
+              </span>
+              <Icon name="ChevronRight" className="h-5 w-5 text-[#0B4F6C]/30" />
+            </button>
+          );
+        })()}
+
         {/* milestones */}
         <div className="mt-5">
           <SectionTitle title="Milestone rewards" sub="Unlocked automatically by the ledger" />

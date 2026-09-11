@@ -113,10 +113,30 @@ export const HuntCard: React.FC<{ hunt: Hunt; onClick: () => void; horizontal?: 
       </div>
       <div className="px-3.5 pb-3.5 pt-3">
         <div className="mb-2 flex items-center justify-between text-[12px] font-bold">
-          <span className="text-[#0B4F6C]/70">{done} of {required} complete</span>
+          <span className="text-[#0B4F6C]/70">Progress {done}/{required}</span>
           <span className="text-[#D4A853]">+{hunt.completion_points.toLocaleString()} pts</span>
         </div>
         <Bar value={pct} color={pct === 100 ? '#2F855A' : '#1FA9A3'} />
+        <div className="mt-3 flex items-center gap-1">
+          {[...stops].sort((a, b) => a.sequence - b.sequence).map((hs, i) => {
+            const stop = db.stops.find((s) => s.id === hs.stop_id);
+            const isDone = !!prog?.completed_stop_ids.includes(hs.stop_id);
+            return (
+              <React.Fragment key={hs.id}>
+                {i > 0 && <span className={cn('h-0.5 min-w-2 flex-1', isDone ? 'bg-[#1FA9A3]' : 'bg-[#0B4F6C]/12')} />}
+                <span
+                  title={stop?.name}
+                  className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white',
+                    isDone ? 'bg-[#1FA9A3]' : 'bg-[#0B4F6C]/12 text-[#0B4F6C]/55',
+                  )}
+                >
+                  <Icon name={isDone ? 'Check' : (h.category(stop?.category_id ?? '')?.icon ?? 'MapPin')} className="h-3.5 w-3.5" />
+                </span>
+              </React.Fragment>
+            );
+          })}
+        </div>
       </div>
     </Card>
   );
