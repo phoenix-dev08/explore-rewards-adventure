@@ -226,17 +226,17 @@ export const Sheet: React.FC<{ open: boolean; onClose: () => void; children: Rea
       <button
         aria-label="Close"
         onClick={onClose}
-        className={cn('absolute inset-0 bg-[#031A27]/45 backdrop-blur-[2px] transition-opacity duration-300', shown ? 'opacity-100' : 'opacity-0')}
+        className={cn('absolute inset-0 bg-[#031A27]/55 backdrop-blur-[2px] transition-opacity duration-300', shown ? 'opacity-100' : 'opacity-0')}
       />
       <div
         className={cn(
-          'relative flex w-full flex-col overflow-hidden rounded-t-[28px] bg-[#FBF7F0] shadow-[0_-20px_60px_-20px_rgba(3,26,39,.6)] transition-transform duration-300',
-          full ? 'h-[94%]' : 'max-h-[88%]',
+          'relative flex w-full flex-col overflow-hidden shadow-[0_-20px_60px_-20px_rgba(3,26,39,.6)] transition-transform duration-300',
+          full ? 'h-full rounded-none bg-[#031A27]' : 'max-h-[88%] rounded-t-[28px] bg-[#FBF7F0]',
         )}
         style={{ transform: shown ? 'translateY(0)' : 'translateY(102%)', transitionTimingFunction: 'cubic-bezier(.22,1,.36,1)' }}
       >
-        <div className="flex shrink-0 justify-center pt-3"><div className="h-1.5 w-10 rounded-full bg-[#0B4F6C]/18" /></div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-6">{children}</div>
+        {!full && <div className="flex shrink-0 justify-center pt-3"><div className="h-1.5 w-10 rounded-full bg-[#0B4F6C]/18" /></div>}
+        <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', full ? 'pb-0' : 'pb-6')}>{children}</div>
       </div>
     </div>
   );

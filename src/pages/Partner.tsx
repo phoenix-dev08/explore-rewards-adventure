@@ -34,7 +34,7 @@ const Partner: React.FC = () => {
   const stop = db.stops.find((s) => s.business_id === BIZ_ID);
   if (!biz || !stop) {
     return (
-      <div className="flex h-full min-h-0 flex-col items-center justify-center overflow-y-auto bg-[#F4F1EA] px-6 text-center">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#F4F1EA] px-6 text-center">
         <Wordmark size="md" />
         <h1 className="mt-6 text-[20px] font-black text-[#062B3F]">Partner Portal requires a session</h1>
         <p className="mt-2 max-w-md text-[13px] leading-relaxed text-[#0B4F6C]/65">
@@ -62,7 +62,7 @@ const Partner: React.FC = () => {
   const maxVisits = Math.max(...weekly.map((w) => w.visits));
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto bg-[#F4F1EA]">
+    <div className="min-h-screen bg-[#F4F1EA]">
       <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-black/5 bg-white/90 px-5 py-3 backdrop-blur-xl">
         <Wordmark size="sm" />
         <span className="hidden rounded-full bg-[#1FA9A3]/12 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-[#0B6B67] sm:inline">Partner Portal</span>

@@ -3,7 +3,7 @@ import { useAloha } from '@/store/AlohaStore';
 import MapCanvas from '../MapCanvas';
 import { Btn, Chip, CooldownClock, Icon, Pill, Sheet, Skeleton } from '../kit';
 import { PointsBadge, StopRow, SaveButton, useHelpers } from '../cards';
-import { formatDistance } from '@/lib/geo';
+import { formatDistance, isApproachingStop } from '@/lib/geo';
 import { hoursLabel, stopIsOpen } from '@/lib/recommend';
 import { cn } from '@/lib/utils';
 import { AlohaStop } from '@/data/types';
@@ -78,7 +78,27 @@ const Explore: React.FC = () => {
   }, [db.stops, db.rewards, filters, query, coords, distanceTo, liveDropStops, activeHuntStops, h, isFavorite, stopEligibility]);
 
   const inRangeIds = useMemo(() => new Set(visible.filter((s) => stopEligibility(s).inRange).map((s) => s.id)), [visible, stopEligibility, nowTick]);
+  const approachingIds = useMemo(() => new Set(visible.filter((s) => {
+    const e = stopEligibility(s);
+    return !e.inRange && !e.interactionCooling && isApproachingStop(coords, s.coords, s.geofence_m, distanceTo(s.coords));
+  }).map((s) => s.id)), [visible, stopEligibility, coords, distanceTo, nowTick]);
   const cooldownIds = useMemo(() => new Set(visible.filter((s) => stopEligibility(s).interactionCooling).map((s) => s.id)), [visible, stopEligibility, nowTick]);
+  const inRangeStop = useMemo(
+    () => visible.find((s) => { const e = stopEligibility(s); return e.inRange && e.canInteract; }) ?? null,
+    [visible, stopEligibility, nowTick],
+  );
+
+  const openStop = (id: string) => {
+    const s = db.stops.find((x) => x.id === id);
+    if (!s) return;
+    const e = stopEligibility(s);
+    if (e.inRange && e.canInteract) {
+      setSelected(null);
+      setCheckStopId(id);
+      return;
+    }
+    setSelected(id);
+  };
   const cooldownUntil = useMemo(() => {
     const rec: Record<string, string> = {};
     visible.forEach((s) => {
@@ -103,7 +123,7 @@ const Explore: React.FC = () => {
       return e.inRange && e.canInteract;
     });
     if (here) {
-      return { icon: 'Sparkles', eyebrow: 'You’re here', text: `Collect ${here.name} — this Aloha Stop is glowing.`, onClick: () => setSelected(here.id) };
+      return { icon: 'Sparkles', eyebrow: '🌺 Aloha Stop in range', text: `Tap ${here.name} to collect.`, onClick: () => { setSelected(null); setCheckStopId(here.id); } };
     }
 
     const nearbyDrop = db.drops
@@ -188,10 +208,11 @@ const Explore: React.FC = () => {
           huntStopIds={activeHuntStops}
           selectedId={selected}
           userCoords={coords}
-          onSelect={(id) => setSelected(id)}
+          onSelect={openStop}
           categoryIcon={(cid) => h.category(cid)?.icon ?? 'MapPin'}
           regionLabels={db.regions.map((r) => ({ name: r.name, center: r.center }))}
           inRangeIds={inRangeIds}
+          approachingIds={approachingIds}
           cooldownIds={cooldownIds}
           cooldownUntil={cooldownUntil}
           passportStopIds={passportStopIds}
@@ -288,7 +309,23 @@ const Explore: React.FC = () => {
         <>
           <div className="absolute bottom-4 left-4 right-4 z-20 flex items-end justify-between gap-3">
             <div className="min-w-0 flex-1 space-y-2">
-              {questHint && !selectedStop && (
+              {inRangeStop && !selectedStop && !checkStop && (
+                <button
+                  onClick={() => openStop(inRangeStop.id)}
+                  className="flex w-full max-w-[320px] items-center gap-3 rounded-3xl bg-gradient-to-br from-[#E7C577] to-[#1FA9A3] px-3.5 py-3 text-left text-[#062B3F] shadow-[0_18px_40px_-16px_rgba(31,169,163,.95)] ring-2 ring-white/70"
+                  style={{ animation: 'ah-approach-pulse 1.8s ease-in-out infinite' }}
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#031A27] text-white">
+                    <Icon name="Sparkles" className="h-5 w-5 text-[#E7C577]" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-[#3A2A05]">🌺 Aloha Stop in range!</span>
+                    <span className="block truncate text-[16px] font-black leading-tight">{inRangeStop.name}</span>
+                    <span className="block text-[12px] font-extrabold text-[#062B3F]/75">Tap to collect</span>
+                  </span>
+                </button>
+              )}
+              {questHint && !selectedStop && !inRangeStop && (
                 <button onClick={questHint.onClick} className="flex w-full max-w-[280px] items-start gap-2 rounded-2xl bg-[#031A27]/88 px-3 py-2.5 text-left text-white shadow-lg ring-1 ring-white/10 backdrop-blur">
                   <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#1FA9A3]/25"><Icon name={questHint.icon} className="h-3.5 w-3.5 text-[#8FE3DC]" /></span>
                   <span className="min-w-0">
@@ -445,10 +482,14 @@ const StopPreview: React.FC<{ stop: AlohaStop; onOpen: () => void; onCollect: ()
         </div>
       )}
       {elig.inRange && !elig.interactionCooling && (
-        <p className="mt-3 text-center text-[12px] font-extrabold text-[#1FA9A3]">You’re in range — this Stop is glowing</p>
+        <p className="mt-3 text-center text-[14px] font-black text-[#1FA9A3]">🌺 Aloha Stop in range! Tap Collect</p>
       )}
       {!elig.inRange && coords && !elig.interactionCooling && (
-        <p className="mt-3 text-center text-[12px] font-bold text-[#0B4F6C]/60">Get within {stop.geofence_m} m to collect</p>
+        <p className="mt-3 text-center text-[12px] font-bold text-[#0B4F6C]/60">
+          {isApproachingStop(coords, stop.coords, stop.geofence_m, distanceTo(stop.coords))
+            ? 'Getting close — keep walking until it glows'
+            : `Walk within ${stop.geofence_m} m to activate this Stop`}
+        </p>
       )}
 
       <div className="mt-3 flex gap-2">

@@ -48,6 +48,14 @@ export function isInGeofence(user: LatLng | null, stopCoords: LatLng, radiusM: n
   return d <= Math.max(20, radiusM || 100);
 }
 
+/** Close enough to start glowing, but not yet inside the collect geofence. */
+export function isApproachingStop(user: LatLng | null, stopCoords: LatLng, radiusM: number, distM?: number | null) {
+  if (!user) return false;
+  const d = distM ?? distanceMeters(user, stopCoords);
+  const fence = Math.max(20, radiusM || 100);
+  return d > fence && d <= Math.max(fence * 4, 400);
+}
+
 export function formatDistance(m: number | null) {
   if (m === null || Number.isNaN(m)) return '—';
   const miles = m / 1609.34;

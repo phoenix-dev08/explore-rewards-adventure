@@ -234,23 +234,23 @@ const StopDetail: React.FC<{ id: string }> = ({ id }) => {
       {/* sticky actions */}
       <div className="sticky bottom-0 z-30 mt-6 border-t border-black/5 bg-[#FBF7F0]/95 px-4 pb-4 pt-3 backdrop-blur-xl">
         {elig.interactionCooling && elig.interactionReadyAt && (
-          <p className="mb-2 text-center text-[12px] font-extrabold text-[#0B4F6C]/70">
-            <CooldownClock until={elig.interactionReadyAt} prefix="Available again in " />
+          <p className="mb-2 text-center text-[13px] font-extrabold text-[#0B4F6C]/70">
+            🕐 Cooldown — <CooldownClock until={elig.interactionReadyAt} prefix="" />
           </p>
         )}
         {elig.inRange && !elig.interactionCooling && (
-          <p className="mb-2 text-center text-[12px] font-extrabold text-[#1FA9A3]">You’re in range — tap Collect</p>
+          <p className="mb-2 text-center text-[13px] font-black text-[#1FA9A3]">🌺 Aloha Stop in range! Tap to collect</p>
         )}
         {!elig.inRange && !elig.interactionCooling && (
           <p className="mb-2 text-center text-[12px] font-bold text-[#0B4F6C]/55">
-            Get within {stop.geofence_m} m to collect · {formatDistance(distanceTo(stop.coords))}
+            Walk within {stop.geofence_m} m to activate · {formatDistance(distanceTo(stop.coords))}
           </p>
         )}
         <div className="flex gap-2">
           <Btn className="flex-1" size="lg" variant={elig.inRange && elig.canInteract ? 'coral' : 'primary'}
             icon={elig.interactionCooling ? 'Clock' : elig.inRange ? 'Sparkles' : 'MapPin'}
             onClick={() => setCheckOpen(true)}>
-            {elig.interactionCooling ? 'Cooling down' : elig.inRange ? 'You’re here — Collect' : 'Get closer'}
+            {elig.interactionCooling ? 'Cooldown' : elig.inRange ? 'Collect this Stop' : 'Get closer'}
           </Btn>
           <Btn size="lg" variant="outline" icon="Navigation" onClick={() => window.open(`https://maps.google.com/?q=${stop.coords.lat},${stop.coords.lng}`, '_blank')}>Directions</Btn>
           <SaveButton type="stop" id={stop.id} className="h-[52px] w-[52px] rounded-2xl" />

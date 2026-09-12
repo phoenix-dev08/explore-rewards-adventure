@@ -63,6 +63,10 @@
   0%, 100% { filter: grayscale(0.35) brightness(0.92); }
   50% { filter: grayscale(0.55) brightness(0.78); }
 }
+@keyframes ah-approach-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 197, 119, 0.28), 0 0 12px 3px rgba(31, 169, 163, 0.18); transform: scale(1); }
+  50% { box-shadow: 0 0 0 10px rgba(231, 197, 119, 0), 0 0 20px 8px rgba(31, 169, 163, 0.32); transform: scale(1.06); }
+}
 
 
 @layer base {

@@ -30,8 +30,7 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
     if (elig.interactionCooling) setStage('arrive');
     else if (elig.inRange) setStage('collect');
     else setStage('arrive');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, stop.id]);
+  }, [open, stop.id, elig.inRange, elig.interactionCooling]);
 
   useEffect(() => () => stopCamera(), []);
 
@@ -92,7 +91,7 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
   };
 
   return (
-    <Sheet open={open} onClose={() => { stopCamera(); onClose(); }} label="Collect Aloha Stop" full={stage === 'result' && !!result?.ok}>
+    <Sheet open={open} onClose={() => { stopCamera(); onClose(); }} label="Collect Aloha Stop" full={stage === 'collect' || stage === 'gps' || (stage === 'result' && !!result?.ok)}>
       {stage === 'arrive' && (
         <div className="px-5 pb-5 pt-2">
           <div className="mb-1 flex items-center gap-2">
@@ -197,26 +196,31 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
       )}
 
       {stage === 'collect' && (
-        <div className="px-5 pb-6 pt-2">
-          <h3 className="text-center text-[20px] font-black text-[#062B3F]">Collect {stop.name}</h3>
-          <p className="mx-auto mt-1 max-w-sm text-center text-[12.5px] text-[#0B4F6C]/65">
-            Original Aloha Hunt ritual — hold, then open the swell. This is not a copy of any other game’s stop interaction.
+        <div className="flex min-h-full flex-col bg-[#031A27] px-5 pb-8 pt-7 text-white">
+          <button type="button" onClick={() => setStage('arrive')} className="self-start text-[12px] font-black uppercase tracking-[0.16em] text-white/55">
+            Back
+          </button>
+          <p className="mt-6 text-center text-[13px] font-black uppercase tracking-[0.2em] text-[#E7C577]">🌺 Aloha Stop in range!</p>
+          <h3 className="mt-2 text-center text-[28px] font-black leading-tight">{stop.name}</h3>
+          <p className="mx-auto mt-2 max-w-sm text-center text-[13px] leading-relaxed text-white/65">
+            Hold the puka, then swipe the swell. This interaction is original to Aloha Hunt.
           </p>
-          <AlohaCollect stopName={stop.name} onCollected={() => void runGps()} />
-          <Btn full variant="ghost" className="mt-2" onClick={() => setStage('arrive')}>Back</Btn>
+          <div className="mt-5 rounded-[28px] bg-[#FBF7F0] px-3 py-4 text-[#062B3F]">
+            <AlohaCollect stopName={stop.name} onCollected={() => void runGps()} />
+          </div>
         </div>
       )}
 
       {stage === 'gps' && (
-        <div className="flex flex-col items-center px-6 pb-10 pt-6">
+        <div className="flex min-h-full flex-col items-center justify-center bg-[#031A27] px-6 pb-10 pt-6 text-white">
           <div className="relative flex h-32 w-32 items-center justify-center">
-            <span className="absolute inset-0 animate-ping rounded-full bg-[#1FA9A3]/20" />
-            <span className="absolute inset-4 animate-pulse rounded-full bg-[#1FA9A3]/25" />
-            <Icon name="LocateFixed" className="relative h-12 w-12 text-[#0B4F6C]" />
+            <span className="absolute inset-0 animate-ping rounded-full bg-[#1FA9A3]/25" />
+            <span className="absolute inset-4 animate-pulse rounded-full bg-[#1FA9A3]/30" />
+            <Icon name="LocateFixed" className="relative h-12 w-12 text-[#8FE3DC]" />
           </div>
-          <h3 className="mt-5 text-[17px] font-black text-[#062B3F]">Checking proximity…</h3>
-          <p className="mt-1.5 max-w-xs text-center text-[12.5px] text-[#0B4F6C]/60">
-            Comparing your position against the server-side geofence for {stop.name}.
+          <h3 className="mt-5 text-[20px] font-black">Collecting…</h3>
+          <p className="mt-1.5 max-w-xs text-center text-[13px] text-white/60">
+            Verifying you’re inside the geofence for {stop.name}.
           </p>
         </div>
       )}
@@ -286,122 +290,98 @@ const CheckIn: React.FC<{ stop: AlohaStop; open: boolean; onClose: () => void }>
 };
 
 const Success: React.FC<{ stop: AlohaStop; result: CheckInResult; onClose: () => void; onPassport: () => void }> = ({ stop, result, onClose, onPassport }) => {
-  const { db, stopEligibility } = useAloha();
+  const { db, go, stopEligibility } = useAloha();
   const h = useHelpers();
   const elig = stopEligibility(stop);
   const stamp = result.stampId ? db.stampDefs.find((s) => s.id === result.stampId) : null;
   const completedHunt = result.huntProgressed?.find((x) => x.completed);
-  const hunt = completedHunt ? db.hunts.find((x) => x.id === completedHunt.huntId) : null;
-  const progressed = result.huntProgressed?.filter((x) => !x.completed) ?? [];
+  const huntLines = (result.huntProgressed ?? []).map((p) => {
+    const hh = db.hunts.find((x) => x.id === p.huntId);
+    const prog = db.huntProgress.find((x) => x.hunt_id === p.huntId);
+    const req = db.huntStops.filter((x) => x.hunt_id === p.huntId && x.required).length;
+    const done = prog?.completed_stop_ids.length ?? (p.completed ? req : 0);
+    return hh ? { ...p, name: hh.name, done, req } : null;
+  }).filter(Boolean) as { huntId: string; completed: boolean; name: string; done: number; req: number }[];
 
   return (
-    <div className="relative overflow-hidden px-5 pb-8 pt-4">
-      <div className="pointer-events-none absolute inset-x-0 -top-10 h-64 opacity-70" style={{ background: 'radial-gradient(60% 60% at 50% 40%, rgba(212,168,83,.35), transparent 70%)' }} />
-      <div className="pointer-events-none absolute left-1/2 top-16 h-0 w-0">
-        {Array.from({ length: 14 }).map((_, i) => (
+    <div className="relative flex min-h-full flex-col overflow-hidden bg-[#031A27] px-5 pb-8 pt-10 text-white">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 opacity-80" style={{ background: 'radial-gradient(55% 55% at 50% 30%, rgba(231,197,119,.45), transparent 70%)' }} />
+      <div className="pointer-events-none absolute left-1/2 top-24 h-0 w-0">
+        {Array.from({ length: 18 }).map((_, i) => (
           <span
             key={i}
-            className="absolute block h-1.5 w-1.5 rounded-full"
+            className="absolute block h-2 w-2 rounded-full"
             style={{
               background: i % 3 === 0 ? '#D4A853' : i % 3 === 1 ? '#1FA9A3' : '#FF9E4A',
-              animation: `ah-burst .9s cubic-bezier(.2,.8,.3,1) ${i * 0.02}s forwards`,
-              transform: `rotate(${i * 26}deg)`,
+              animation: `ah-burst 1s cubic-bezier(.2,.8,.3,1) ${i * 0.025}s forwards`,
+              transform: `rotate(${i * 20}deg)`,
             }}
           />
         ))}
       </div>
 
-      <div className="relative flex flex-col items-center">
-        <div className="animate-[ah-pop_.6s_cubic-bezier(.2,1.4,.4,1)] rounded-[28px] bg-gradient-to-br from-[#1FA9A3] to-[#0B4F6C] p-5 shadow-[0_24px_50px_-20px_rgba(11,79,108,.9)]">
-          <Icon name="Check" className="h-10 w-10 text-white" strokeWidth={3} />
+      <div className="relative flex flex-1 flex-col items-center">
+        <div className="animate-[ah-pop_.6s_cubic-bezier(.2,1.4,.4,1)] rounded-[32px] bg-gradient-to-br from-[#E7C577] to-[#1FA9A3] p-6 shadow-[0_24px_50px_-16px_rgba(231,197,119,.8)]">
+          <Icon name="Sparkles" className="h-11 w-11 text-[#031A27]" strokeWidth={2.4} />
         </div>
-        <p className="mt-4 text-[12px] font-black uppercase tracking-[0.22em] text-[#1FA9A3]">🌺 Aloha Stop collected</p>
-        <h2 className="mt-1 text-center text-[28px] font-black leading-tight tracking-tight text-[#062B3F]">
-          ALOHA STOP COLLECTED!
+        <h2 className="mt-6 text-center text-[32px] font-black leading-[1.05] tracking-tight">
+          ALOHA STOP COLLECTED! 🌺
         </h2>
-        <p className="mt-1 text-[13px] font-bold text-[#0B4F6C]/60">{stop.name}</p>
+        <p className="mt-1.5 text-[14px] font-bold text-white/65">{stop.name}</p>
 
-        <div className="mt-5 w-full rounded-3xl bg-white p-5 shadow-[0_18px_44px_-26px_rgba(6,43,63,.6)]">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-bold text-[#0B4F6C]/65">
-              {(result.points ?? 0) > 0 ? 'Aloha Points' : result.soft ? 'Visit recorded' : 'Stop collected'}
-            </span>
-            <span className="text-[26px] font-black text-[#062B3F]">
-              {(result.points ?? 0) > 0 ? `+${result.points}` : hunt ? 'Hunt complete' : '—'}
-            </span>
-          </div>
+        <div className="mt-6 w-full space-y-2.5">
           {(result.points ?? 0) > 0 && (
-            <p className="text-right text-[11px] font-black uppercase tracking-wide text-[#0B4F6C]/45">Aloha Points</p>
-          )}
-          {result.soft && result.detail && (
-            <p className="mt-2 text-[12.5px] leading-relaxed text-[#0B4F6C]/65">{result.detail}</p>
-          )}
-
-          {result.drop && (
-            <div className="mt-3 flex items-center gap-2.5 rounded-2xl bg-gradient-to-br from-[#FF9E4A] to-[#FF6F59] p-3 text-white">
-              <Icon name="Zap" className="h-5 w-5" />
-              <span className="flex-1 text-[12.5px] font-extrabold">Aloha Drop qualified — +{result.drop.points} bonus</span>
+            <div className="rounded-2xl bg-white/10 px-4 py-3 text-center ring-1 ring-white/15" style={{ animation: 'ah-rise .45s ease .05s both' }}>
+              <p className="text-[28px] font-black text-[#E7C577]">+{result.points} Aloha Points</p>
             </div>
           )}
-
           {stamp && (
-            <div className="mt-3 flex items-center gap-3 rounded-2xl bg-[#D4A853]/12 p-3 ring-1 ring-[#D4A853]/25">
-              <span className="relative flex h-12 w-12 items-center justify-center rounded-full border-2 border-dashed border-[#8A6414]/50 bg-white/70"
-                style={{ animation: 'ah-stamp .7s cubic-bezier(.2,1.5,.3,1) .2s both' }}>
-                <Icon name={stamp.icon} className="h-5 w-5 text-[#8A6414]" />
-              </span>
-              <span className="flex-1">
-                <span className="block text-[10px] font-black uppercase tracking-wide text-[#8A6414]">Passport stamp earned</span>
-                <span className="block text-[13.5px] font-extrabold text-[#062B3F]">{stamp.name} · {h.region(stamp.region_id)?.name}</span>
+            <div className="flex items-center gap-3 rounded-2xl bg-[#D4A853]/18 px-4 py-3 ring-1 ring-[#E7C577]/35" style={{ animation: 'ah-stamp .7s cubic-bezier(.2,1.5,.3,1) .12s both' }}>
+              <span className="text-[22px]">🏝️</span>
+              <span className="text-[16px] font-black leading-tight">
+                {h.region(stamp.region_id)?.name ?? stamp.name} Passport Stamp
               </span>
             </div>
           )}
-
-          {hunt && (
-            <div className="mt-3 rounded-2xl bg-[#2F855A]/10 p-3 ring-1 ring-[#2F855A]/25">
-              <p className="text-[10px] font-black uppercase tracking-wide text-[#22633F]">Hunt complete</p>
-              <p className="text-[14px] font-black text-[#062B3F]">{hunt.name}</p>
-              <p className="mt-0.5 text-[12px] font-bold text-[#22633F]">
-                +{hunt.completion_points.toLocaleString()} pts{completedHunt?.bonusPoints ? ` +${completedHunt.bonusPoints} bonus` : ''}
+          {huntLines.map((line) => (
+            <div key={line.huntId} className="flex items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 ring-1 ring-white/12" style={{ animation: 'ah-rise .45s ease .18s both' }}>
+              <span className="text-[22px]">🏆</span>
+              <span className="text-[16px] font-black leading-tight">
+                {line.name} Progress {line.done}/{line.req}
+                {line.completed ? ' — Complete!' : ''}
+              </span>
+            </div>
+          ))}
+          {result.drop && (
+            <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#FF9E4A]/90 to-[#FF6F59]/90 px-4 py-3" style={{ animation: 'ah-rise .45s ease .24s both' }}>
+              <span className="text-[22px]">⚡</span>
+              <span className="text-[16px] font-black leading-tight">Aloha Drop Unlocked · +{result.drop.points}</span>
+            </div>
+          )}
+          {elig.interactionReadyAt && (
+            <div className="rounded-2xl bg-black/30 px-4 py-3 text-center ring-1 ring-white/10" style={{ animation: 'ah-rise .45s ease .3s both' }}>
+              <p className="text-[15px] font-black text-[#E7C577]">
+                🕐 Cooldown — <CooldownClock until={elig.interactionReadyAt} prefix="" />
               </p>
             </div>
           )}
-
-          {progressed.map((p) => {
-            const hh = db.hunts.find((x) => x.id === p.huntId);
-            const prog = db.huntProgress.find((x) => x.hunt_id === p.huntId);
-            const req = db.huntStops.filter((x) => x.hunt_id === p.huntId && x.required).length;
-            const done = prog?.completed_stop_ids.length ?? 0;
-            if (!hh) return null;
-            return (
-              <div key={p.huntId} className="mt-3 rounded-2xl bg-[#1FA9A3]/10 p-3">
-                <div className="flex items-center gap-2.5">
-                  <Icon name="Flag" className="h-4 w-4 text-[#0B6B67]" />
-                  <span className="flex-1 text-[12.5px] font-extrabold text-[#062B3F]">{hh.name}: {done}/{req} Stops Completed</span>
-                </div>
-                <p className="mt-1 text-[11.5px] font-bold text-[#0B6B67]">
-                  {req - done === 0 ? 'Hunt complete' : `Only ${req - done} more Stop${req - done === 1 ? '' : 's'} to finish this Hunt.`}
-                </p>
-              </div>
-            );
-          })}
-
-          {elig.interactionReadyAt && (
-            <div className="mt-3 rounded-2xl bg-[#062B3F] px-3 py-3 text-center text-white">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/50">This Stop is cooling down</p>
-              <CooldownClock until={elig.interactionReadyAt} prefix="Available again in " className="text-[20px] font-black text-[#E7C577]" />
-            </div>
+          {completedHunt && (
+            <p className="pt-1 text-center text-[12.5px] font-bold text-[#8FE3DC]">
+              Hunt complete · bonus Aloha Points are on your ledger
+            </p>
           )}
-
-          <div className="mt-4 border-t border-dashed border-[#0B4F6C]/12 pt-3 text-center">
-            <p className="text-[11px] font-black uppercase tracking-wide text-[#0B4F6C]/45">New balance</p>
-            <p className="text-[24px] font-black text-[#062B3F]"><Points value={db.user.points_balance} /> <span className="text-[13px] font-bold text-[#0B4F6C]/50">Aloha Points</span></p>
-          </div>
+          <p className="pt-1 text-center text-[13px] font-bold text-white/50">
+            Balance <Points value={db.user.points_balance} /> Aloha Points
+          </p>
         </div>
 
-        <div className="mt-5 w-full space-y-2.5">
+        <div className="mt-auto w-full space-y-2.5 pt-8">
           <Btn full size="lg" variant="gold" icon="Stamp" onClick={onPassport}>View Passport</Btn>
-          <Btn full variant="outline" icon="Compass" onClick={onClose}>Continue Exploring</Btn>
+          <Btn full variant="ghost" className="bg-white/10 text-white hover:bg-white/15" icon="Flag"
+            onClick={() => { onClose(); if (huntLines[0]) go({ name: 'hunt', id: huntLines[0].huntId }); }}>
+            See Hunt progress
+          </Btn>
+          <Btn full variant="ghost" className="text-white/80" icon="Compass" onClick={onClose}>Keep exploring</Btn>
         </div>
       </div>
     </div>

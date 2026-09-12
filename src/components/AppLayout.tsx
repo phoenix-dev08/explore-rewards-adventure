@@ -168,7 +168,7 @@ const AppLayout: React.FC = () => {
   const { phase, db, loading, authChecked } = useAloha();
 
   return (
-    <div className="flex h-full max-h-full overflow-hidden bg-gradient-to-br from-[#0B4F6C] via-[#083C54] to-[#031A27]">
+    <div className="flex h-[100dvh] max-h-[100dvh] overflow-hidden bg-gradient-to-br from-[#0B4F6C] via-[#083C54] to-[#031A27]">
 
       {phase === 'app' && <SideRail />}
       <div className="relative flex min-h-0 min-w-0 flex-1 items-stretch justify-center overflow-hidden">
