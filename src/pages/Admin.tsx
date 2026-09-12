@@ -33,7 +33,7 @@ const Admin: React.FC = () => {
 
   if (!db.stops.length) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-[#0A1F2C] px-6 text-center text-white">
+      <div className="flex h-full min-h-0 flex-col items-center justify-center overflow-y-auto bg-[#0A1F2C] px-6 text-center text-white">
         <Wordmark size="md" light />
         <h1 className="mt-6 text-[20px] font-black">Admin requires a session</h1>
         <p className="mt-2 max-w-md text-[13px] leading-relaxed text-white/60">
@@ -53,7 +53,7 @@ const Admin: React.FC = () => {
   const groups = [...new Set(NAV.map((n) => n.group))];
 
   return (
-    <div className="min-h-screen bg-[#0A1F2C]">
+    <div className="h-full min-h-0 overflow-y-auto bg-[#0A1F2C]">
       <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-white/8 bg-[#0A1F2C]/95 px-5 py-3 backdrop-blur-xl">
         <Wordmark size="sm" light />
         <span className="hidden rounded-full bg-[#D4A853]/20 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-[#E7C577] sm:inline">Admin</span>
