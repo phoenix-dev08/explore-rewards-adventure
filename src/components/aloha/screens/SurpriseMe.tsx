@@ -3,7 +3,7 @@ import { useAloha } from '@/store/AlohaStore';
 import { Btn, Card, HeaderBar, Icon, Pill, SectionTitle } from '../kit';
 import MapCanvas from '../MapCanvas';
 import { useHelpers } from '../cards';
-import { buildAdventure, formatMinutes, hoursLabel } from '@/lib/recommend';
+import { budgetLabel, buildAdventure, fitsBudget, formatMinutes, hoursLabel, huntFitsBudget, spendLabel, typicalSpend } from '@/lib/recommend';
 import { Adventure, AdventurePrefs } from '@/data/types';
 import { MOOD_LABELS } from '@/data/seed';
 import { cn } from '@/lib/utils';
@@ -47,7 +47,7 @@ const MOODS: { v: string; icon: string }[] = [
 ];
 
 const SurpriseMe: React.FC = () => {
-  const { db, back, go, coords, saveAdventure, startHunt, toast } = useAloha();
+  const { db, back, go, coords, saveAdventure } = useAloha();
   const h = useHelpers();
   const [step, setStep] = useState(0);
   const [prefs, setPrefs] = useState<AdventurePrefs>({ company: 'friends', budget: 50, minutes: 180, moods: [] });
@@ -107,7 +107,7 @@ const SurpriseMe: React.FC = () => {
         <div className="rounded-3xl bg-gradient-to-br from-[#1FA9A3] to-[#0B4F6C] p-5 text-white">
           <Icon name="Sparkles" className="h-6 w-6 text-[#E7C577]" />
           <h2 className="mt-2.5 text-[22px] font-black leading-tight">What kind of Aloha adventure should we create?</h2>
-          <p className="mt-1.5 text-[12.5px] text-white/70">Four quick questions. We’ll build a route from live Aloha Stop data.</p>
+          <p className="mt-1.5 text-[12.5px] text-white/70">Four quick questions. Budget is a hard filter — Free means only $0 Stops.</p>
         </div>
 
         <div className="mt-5 space-y-5">
@@ -167,10 +167,20 @@ const SurpriseMe: React.FC = () => {
 };
 
 const Result: React.FC<{ adventure: Adventure; onShuffle: () => void; onBack: () => void }> = ({ adventure, onShuffle, onBack }) => {
-  const { db, go, coords, saveAdventure, toast } = useAloha();
+  const { db, go, coords, saveAdventure, distanceTo } = useAloha();
   const h = useHelpers();
   const [showRoute, setShowRoute] = useState(true);
-  const stops = adventure.stopIds.map((id) => db.stops.find((s) => s.id === id)!).filter(Boolean);
+  const stops = adventure.stopIds
+    .map((id) => db.stops.find((s) => s.id === id))
+    .filter((s): s is NonNullable<typeof s> => !!s && fitsBudget(s, adventure.prefs));
+  const extras = db.stops
+    .filter((s) => s.status === 'approved' && fitsBudget(s, adventure.prefs) && !stops.some((p) => p.id === s.id))
+    .sort((a, b) => (distanceTo(a.coords) ?? 1e9) - (distanceTo(b.coords) ?? 1e9));
+  const budgetText = budgetLabel(adventure.prefs.budget);
+  const budgetHunts = db.hunts.filter((hunt) => hunt.status === 'active' && huntFitsBudget(hunt.id, db.huntStops, db.stops, adventure.prefs));
+  const budgetHuntIds = new Set(budgetHunts.map((hunt) => hunt.id));
+  const stopInBudgetHunt = (stopId: string) => db.huntStops.some((hs) => hs.stop_id === stopId && budgetHuntIds.has(hs.hunt_id));
+  const approxSpend = stops.reduce((n, s) => n + typicalSpend(s), 0);
 
   return (
     <div className="min-h-full bg-[#FBF7F0] pb-32">
@@ -185,11 +195,14 @@ const Result: React.FC<{ adventure: Adventure; onShuffle: () => void; onBack: ()
           <p className="relative text-[10px] font-black uppercase tracking-[0.22em] text-[#8FE3DC]">Your Aloha Hunt</p>
           <h1 className="relative mt-1 text-[26px] font-black leading-tight">“{adventure.title}”</h1>
           <p className="relative mt-2 text-[12.5px] leading-relaxed text-white/70">{adventure.summary}</p>
+          <div className="relative mt-3 inline-flex rounded-full bg-[#E7C577] px-3 py-1 text-[11px] font-black uppercase tracking-wide text-[#3A2A05]">
+            Budget · {budgetText}
+          </div>
           <div className="relative mt-4 grid grid-cols-3 gap-2">
             {[
               ['Stops', String(stops.length)],
-              ['Time', formatMinutes(adventure.minutes)],
-              ['Approx.', adventure.spend === 0 ? 'Free' : `$${adventure.spend}/person`],
+              ['Time', formatMinutes(stops.reduce((m, s) => m + s.avg_minutes + 20, 0) || adventure.minutes)],
+              ['Approx.', approxSpend === 0 ? 'Free' : `$${approxSpend}/person`],
             ].map(([k, v]) => (
               <div key={k} className="rounded-2xl bg-white/10 p-2.5 text-center">
                 <p className="text-[9.5px] font-black uppercase tracking-wide text-white/55">{k}</p>
@@ -199,17 +212,28 @@ const Result: React.FC<{ adventure: Adventure; onShuffle: () => void; onBack: ()
           </div>
         </div>
 
-        <button onClick={() => setShowRoute((v) => !v)} className="mt-4 flex w-full items-center gap-2 text-[12.5px] font-bold text-[#1FA9A3]">
-          <Icon name={showRoute ? 'ChevronUp' : 'Map'} className="h-4 w-4" />{showRoute ? 'Hide route map' : 'View Route'}
-        </button>
-        {showRoute && (
+        {stops.length > 0 && (
+          <button onClick={() => setShowRoute((v) => !v)} className="mt-4 flex w-full items-center gap-2 text-[12.5px] font-bold text-[#1FA9A3]">
+            <Icon name={showRoute ? 'ChevronUp' : 'Map'} className="h-4 w-4" />{showRoute ? 'Hide route map' : 'View Route'}
+          </button>
+        )}
+        {showRoute && stops.length > 0 && (
           <Card className="relative mt-2 h-52 overflow-hidden">
             <MapCanvas
-              stops={stops} drops={db.drops} huntStopIds={new Set(adventure.stopIds)} userCoords={coords}
+              stops={stops} drops={db.drops} huntStopIds={new Set(stops.map((s) => s.id))} userCoords={coords}
               onSelect={(id) => go({ name: 'stop', id })} categoryIcon={(cid) => h.category(cid)?.icon ?? 'MapPin'}
-              routeStopIds={adventure.stopIds} compact
+              routeStopIds={stops.map((s) => s.id)} compact
             />
           </Card>
+        )}
+
+        {!stops.length && (
+          <div className="mt-5 rounded-3xl bg-white p-6 text-center ring-1 ring-black/5">
+            <Icon name="Wallet" className="mx-auto h-7 w-7 text-[#0B4F6C]/30" />
+            <p className="mt-2 text-[15px] font-extrabold text-[#062B3F]">Nothing fits this budget yet</p>
+            <p className="mt-1 text-[12.5px] text-[#0B4F6C]/60">We will not add paid Stops to a Free plan, or anything over your cap. Raise the budget and try again.</p>
+            <button onClick={onBack} className="mt-3 text-[13px] font-extrabold text-[#1FA9A3]">Change budget</button>
+          </div>
         )}
 
         <div className="mt-5 space-y-3">
@@ -224,11 +248,13 @@ const Result: React.FC<{ adventure: Adventure; onShuffle: () => void; onBack: ()
                 <p className="text-[10px] font-black uppercase tracking-wide text-[#FF6F59]">Stop {i + 1}</p>
                 <p className="truncate text-[14.5px] font-extrabold text-[#062B3F]">{s.name}</p>
                 <p className="truncate text-[12px] font-semibold text-[#0B4F6C]/60">{h.category(s.category_id)?.name} · {hoursLabel(s)}</p>
-                <p className="mt-0.5 text-[11.5px] font-bold text-[#1FA9A3]">+{h.pointsFor(s)} pts · ~{s.avg_minutes} min · {s.avg_spend === 0 ? 'Free' : `$${s.avg_spend}`}</p>
+                <p className="mt-0.5 text-[11.5px] font-bold text-[#1FA9A3]">
+                  +{h.pointsFor(s)} pts · ~{s.avg_minutes} min · <span className={typicalSpend(s) === 0 ? 'text-[#2F855A]' : ''}>{spendLabel(s)}</span>
+                </p>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {s.passport_stamp_id && <span className="rounded-full bg-[#D4A853]/16 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#8A6414]">Passport</span>}
                   {db.drops.some((d) => d.stop_id === s.id && d.status === 'live') && <span className="rounded-full bg-[#FF6F59]/16 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#B23D2A]">Drop</span>}
-                  {db.huntStops.some((hs) => hs.stop_id === s.id) && <span className="rounded-full bg-[#1FA9A3]/14 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#0B6B67]">Hunt</span>}
+                  {stopInBudgetHunt(s.id) && <span className="rounded-full bg-[#1FA9A3]/14 px-2 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#0B6B67]">Hunt</span>}
                 </div>
               </div>
               <Icon name="ChevronRight" className="h-5 w-5 shrink-0 self-center text-[#0B4F6C]/25" />
@@ -236,18 +262,58 @@ const Result: React.FC<{ adventure: Adventure; onShuffle: () => void; onBack: ()
           ))}
         </div>
 
-        <div className="mt-4 rounded-3xl bg-gradient-to-br from-[#E7C577] to-[#D4A853] p-4 text-[#3A2A05]">
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">Complete all qualifying stops</p>
-          <p className="mt-0.5 text-[24px] font-black">+{adventure.bonus_points.toLocaleString()} Aloha Points</p>
-          <p className="text-[11.5px] font-bold opacity-75">Awarded server-side after the final verified check-in</p>
-        </div>
+        {extras.length > 0 && (
+          <div className="mt-6">
+            <SectionTitle title="More in your budget" sub={`${budgetText} · ${extras.length} other Aloha Stop${extras.length === 1 ? '' : 's'}`} />
+            <div className="space-y-2">
+              {extras.map((s) => (
+                <button key={s.id} onClick={() => go({ name: 'stop', id: s.id })} className="flex w-full items-center gap-3 rounded-2xl bg-white p-3 text-left ring-1 ring-black/5">
+                  <img src={s.images[0]} alt="" className="h-12 w-12 rounded-xl object-cover" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-extrabold text-[#062B3F]">{s.name}</span>
+                    <span className="block text-[11.5px] font-semibold text-[#0B4F6C]/60">
+                      {h.category(s.category_id)?.name} · {spendLabel(s)}
+                    </span>
+                  </span>
+                  <Icon name="ChevronRight" className="h-4 w-4 text-[#0B4F6C]/30" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {budgetHunts.length > 0 && (
+          <div className="mt-6">
+            <SectionTitle title="Hunts in your budget" sub={`${budgetText} · every Stop on these hunts fits`} />
+            <div className="space-y-2">
+              {budgetHunts.map((hunt) => (
+                <button key={hunt.id} onClick={() => go({ name: 'hunt', id: hunt.id })} className="flex w-full items-center gap-3 rounded-2xl bg-white p-3 text-left ring-1 ring-black/5">
+                  <img src={hunt.hero} alt="" className="h-12 w-12 rounded-xl object-cover" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-extrabold text-[#062B3F]">{hunt.name}</span>
+                    <span className="block text-[11.5px] font-semibold text-[#0B4F6C]/60">{hunt.subtitle}</span>
+                  </span>
+                  <Icon name="ChevronRight" className="h-4 w-4 text-[#0B4F6C]/30" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {stops.length > 0 && (
+          <div className="mt-4 rounded-3xl bg-gradient-to-br from-[#E7C577] to-[#D4A853] p-4 text-[#3A2A05]">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">Complete all qualifying stops</p>
+            <p className="mt-0.5 text-[24px] font-black">+{adventure.bonus_points.toLocaleString()} Aloha Points</p>
+            <p className="text-[11.5px] font-bold opacity-75">Awarded server-side after the final verified check-in</p>
+          </div>
+        )}
       </div>
 
       <div className="sticky bottom-0 z-30 mt-6 border-t border-black/5 bg-[#FBF7F0]/95 px-4 pb-4 pt-3 backdrop-blur-xl">
 
         <div className="flex gap-2">
-          <Btn className="flex-1" size="lg" variant="coral" icon="Play"
-            onClick={() => { saveAdventure(adventure); go({ name: 'stop', id: adventure.stopIds[0] }); }}>
+          <Btn className="flex-1" size="lg" variant="coral" icon="Play" disabled={!stops[0]}
+            onClick={() => { if (!stops[0]) return; saveAdventure(adventure); go({ name: 'stop', id: stops[0].id }); }}>
             Start This Adventure
           </Btn>
           <Btn size="lg" variant="outline" icon="Shuffle" onClick={onShuffle}>Shuffle</Btn>

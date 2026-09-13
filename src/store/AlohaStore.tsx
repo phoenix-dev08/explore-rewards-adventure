@@ -6,7 +6,7 @@ import {
   PassportMilestone, PassportStampDef, PointRule, PointTransaction, Promotion, Redemption, Region,
   Reward, Role, UserHuntProgress, UserProfile, UserStamp,
 } from '@/data/types';
-import { DEMO_LOCATIONS, IMAGES } from '@/data/seed';
+import { DEMO_LOCATIONS, IMAGES, alohaStops as seedStops, hunts as seedHunts, huntStops as seedHuntStops } from '@/data/seed';
 import { checkInEligibility, DEFAULT_INTERACTION_COOLDOWN_MIN, DbState, uid } from '@/lib/engine';
 import { distanceMeters } from '@/lib/geo';
 import { getDeviceHash, readInteractionCooldownMin, readLocalInteractions, writeInteractionCooldownMin, writeLocalInteraction } from '@/lib/device';
@@ -153,10 +153,44 @@ const mapStop = (r: Record<string, unknown>): AlohaStop => ({
   ...(r as unknown as AlohaStop),
   coords: { lat: Number(r.lat), lng: Number(r.lng) },
   rating: Number(r.rating),
+  avg_spend: Number(r.avg_spend),
+  price_tier: (Number(r.price_tier) || 1) as AlohaStop['price_tier'],
   hours: (r.hours as AlohaStop['hours']) ?? [],
   images: (r.images as string[]) ?? [],
   moods: (r.moods as string[]) ?? [],
 });
+
+/** Keep live catalog spend in sync with the demo seed and add any $0 Stops the API does not yet have. */
+function hydrateStops(rows: AlohaStop[]): AlohaStop[] {
+  const seedById = new Map(seedStops.map((s) => [s.id, s]));
+  const out = rows.map((row) => {
+    const seed = seedById.get(row.id);
+    const spend = Number(row.avg_spend);
+    if (seed && seed.avg_spend === 0) {
+      return {
+        ...row,
+        avg_spend: 0,
+        price_tier: seed.price_tier,
+        moods: Array.from(new Set([...(row.moods ?? []), ...seed.moods])),
+      };
+    }
+    return { ...row, avg_spend: Number.isFinite(spend) ? spend : (seed?.avg_spend ?? row.avg_spend) };
+  });
+  const have = new Set(out.map((s) => s.id));
+  for (const seed of seedStops) {
+    if (!have.has(seed.id)) out.push(seed);
+  }
+  return out;
+}
+
+function hydrateHunts(hunts: Hunt[], links: HuntStop[]) {
+  const haveH = new Set(hunts.map((h) => h.id));
+  const haveL = new Set(links.map((h) => h.id));
+  return {
+    hunts: [...hunts, ...seedHunts.filter((h) => !haveH.has(h.id))],
+    huntStops: [...links, ...seedHuntStops.filter((h) => !haveL.has(h.id))],
+  };
+}
 const mapRegion = (r: Record<string, unknown>): Region => ({
   id: String(r.id), island_id: String(r.island_id), name: String(r.name), blurb: String(r.blurb ?? ''),
   center: { lat: Number(r.lat), lng: Number(r.lng) },
@@ -263,9 +297,8 @@ export const AlohaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       categories: (categories.data ?? []) as Category[],
       pointRules: mappedRules,
       businesses: (businesses.data ?? []) as Business[],
-      stops: (stops.data ?? []).map(mapStop),
-      hunts: (hunts.data ?? []) as Hunt[],
-      huntStops: (huntStops.data ?? []) as HuntStop[],
+      stops: hydrateStops((stops.data ?? []).map(mapStop)),
+      ...hydrateHunts((hunts.data ?? []) as Hunt[], (huntStops.data ?? []) as HuntStop[]),
       rewards: (rewards.data ?? []) as Reward[],
       stampDefs: (stampDefs.data ?? []) as PassportStampDef[],
       milestones: (milestones.data ?? []) as PassportMilestone[],

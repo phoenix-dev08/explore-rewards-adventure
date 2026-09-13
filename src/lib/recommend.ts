@@ -34,11 +34,62 @@ export function hoursLabel(stop: AlohaStop, at = new Date()) {
   return `${fmt(h.open)} – ${fmt(h.close)}`;
 }
 
-function budgetCeiling(b: AdventurePrefs['budget']) {
-  return b === 0 ? 0 : b === 999 ? 100000 : b;
+export function budgetCeiling(b: AdventurePrefs['budget']) {
+  return b === 999 ? Number.POSITIVE_INFINITY : b;
+}
+
+const TIER_SPEND: Record<number, number> = { 1: 15, 2: 35, 3: 80, 4: 150 };
+
+/** Typical dollars a guest spends at this Stop. Missing or contradictory rows stay conservative. */
+export function typicalSpend(stop: AlohaStop): number {
+  const raw = Number(stop.avg_spend);
+  const markedFree = Array.isArray(stop.moods) && stop.moods.includes('free');
+  const tier = Number(stop.price_tier);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  if (Number.isFinite(raw) && raw === 0) {
+    if (markedFree || !Number.isFinite(tier) || tier <= 1) return 0;
+    return TIER_SPEND[tier] ?? 35;
+  }
+  if (markedFree) return 0;
+  if (Number.isFinite(tier) && TIER_SPEND[tier] != null) return TIER_SPEND[tier];
+  return Number.POSITIVE_INFINITY;
+}
+
+export function spendLabel(stop: AlohaStop) {
+  const n = typicalSpend(stop);
+  if (!Number.isFinite(n)) return 'Price varies';
+  return n === 0 ? 'Free' : `$${n}`;
+}
+
+/** Hard rule: every Stop on the plan must sit at or under the chosen cap. Free means $0 only. */
+export function fitsBudget(stop: AlohaStop, prefs: AdventurePrefs) {
+  const ceiling = budgetCeiling(prefs.budget);
+  if (!Number.isFinite(ceiling)) return true;
+  return typicalSpend(stop) <= ceiling;
+}
+
+export function huntFitsBudget(
+  huntId: string,
+  huntStops: { hunt_id: string; stop_id: string }[],
+  stops: AlohaStop[],
+  prefs: AdventurePrefs,
+) {
+  const members = huntStops.filter((hs) => hs.hunt_id === huntId);
+  if (!members.length) return false;
+  return members.every((hs) => {
+    const stop = stops.find((s) => s.id === hs.stop_id);
+    return !!stop && fitsBudget(stop, prefs);
+  });
+}
+
+export function budgetLabel(b: AdventurePrefs['budget']) {
+  if (b === 0) return 'Free only';
+  if (b === 999) return 'Any budget';
+  return `$${b} or less per stop`;
 }
 
 export function scoreStop(stop: AlohaStop, prefs: AdventurePrefs, origin: LatLng | null) {
+  if (!fitsBudget(stop, prefs)) return -Infinity;
   let score = 0;
   const moods = prefs.moods.includes('surprise') ? [] : prefs.moods;
   const mapped = moods.map((m) => (m === 'beach' ? 'outdoors' : m === 'culture' ? 'local' : m));
@@ -54,9 +105,7 @@ export function scoreStop(stop: AlohaStop, prefs: AdventurePrefs, origin: LatLng
   if (prefs.company === 'friends' && stop.group_friendly) score += 12;
   if (prefs.company === 'partner' && stop.moods.includes('romantic')) score += 20;
   if (prefs.company === 'solo' && stop.moods.includes('relaxing')) score += 8;
-  const ceiling = budgetCeiling(prefs.budget);
-  if (prefs.budget === 0) score += stop.avg_spend === 0 ? 40 : -60;
-  else if (stop.avg_spend > ceiling) score -= 45;
+  if (prefs.budget === 0) score += 28;
   else score += 8;
   if (origin) {
     const km = distanceMeters(origin, stop.coords) / 1000;
@@ -90,11 +139,29 @@ export function buildAdventure(
   const maxStops = targetMinutes <= 60 ? 2 : targetMinutes <= 180 ? 4 : targetMinutes <= 300 ? 5 : 6;
 
   const ranked = stops
-    .filter((s) => s.status === 'approved')
+    .filter((s) => s.status === 'approved' && fitsBudget(s, prefs))
     .map((s) => ({ s, score: scoreStop(s, prefs, origin) + ((hash(s.id + shuffleSalt) % 22) - 11) }))
+    .filter(({ score }) => Number.isFinite(score))
     .sort((a, b) => b.score - a.score);
 
-  // Anchor on the strongest region so the route stays geographically tight.
+  if (!ranked.length) {
+    return {
+      id: uid('adv'),
+      title: 'No stops in this budget',
+      summary: prefs.budget === 0
+        ? 'Every Aloha Stop on this plan must be free. Nothing in the current catalog matched — try a nearby region or raise the budget.'
+        : `Nothing in the catalog is ${budgetLabel(prefs.budget).toLowerCase()}. Try a higher budget or Treat ourselves.`,
+      stopIds: [],
+      minutes: 0,
+      spend: 0,
+      bonus_points: 0,
+      region_id: prefs.regionId ?? '',
+      prefs,
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  // Anchor on the strongest region that still has in-budget Stops.
   const regionScores = new Map<string, number>();
   ranked.slice(0, 12).forEach(({ s, score }) => regionScores.set(s.region_id, (regionScores.get(s.region_id) ?? 0) + score));
   const anchorRegion = [...regionScores.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ranked[0].s.region_id;
@@ -103,24 +170,29 @@ export function buildAdventure(
   const spill = ranked.filter(({ s }) => s.region_id !== anchorRegion);
   const picked: AlohaStop[] = [];
   const usedCats = new Set<string>();
-  const ceiling = budgetCeiling(prefs.budget);
   let spend = 0;
   let minutes = 0;
 
   for (const { s } of [...pool, ...spill]) {
     if (picked.length >= maxStops) break;
+    if (!fitsBudget(s, prefs)) continue;
     if (usedCats.has(s.category_id) && picked.length > 1) continue;
     if (minutes + s.avg_minutes + 20 > targetMinutes + 45) continue;
-    if (prefs.budget !== 999 && spend + s.avg_spend > ceiling) continue;
     picked.push(s);
     usedCats.add(s.category_id);
-    spend += s.avg_spend;
+    spend += typicalSpend(s);
     minutes += s.avg_minutes + 20;
   }
-  if (picked.length < 2) {
+
+  // Fill remaining time with more in-budget Stops only — never pad with paid options.
+  if (picked.length < Math.min(2, ranked.length)) {
     for (const { s } of ranked) {
-      if (picked.length >= 2) break;
-      if (!picked.includes(s)) { picked.push(s); spend += s.avg_spend; minutes += s.avg_minutes + 20; }
+      if (picked.length >= Math.min(maxStops, ranked.length)) break;
+      if (picked.includes(s) || !fitsBudget(s, prefs)) continue;
+      if (prefs.budget === 0 && typicalSpend(s) > 0) continue;
+      picked.push(s);
+      spend += typicalSpend(s);
+      minutes += s.avg_minutes + 20;
     }
   }
 
@@ -128,12 +200,17 @@ export function buildAdventure(
 
   const regionName = regions.find((r) => r.id === anchorRegion)?.name ?? 'Oʻahu';
   const moodKey = prefs.moods.find((m) => TITLES[m]) ?? 'surprise';
-  const titleOptions = TITLES[moodKey];
+  const titleOptions = TITLES[moodKey] ?? TITLES.surprise;
   const title = `${regionName} ${titleOptions[hash(String(shuffleSalt) + moodKey) % titleOptions.length]}`;
   const bonus = 300 * picked.length + (prefs.minutes >= 300 ? 300 : 0);
 
   const companyWord = { solo: 'a solo day', partner: 'two', friends: 'your crew', family: 'the whole family' }[prefs.company];
-  const summary = `Built for ${companyWord} around ${regionName} — ${picked.length} Aloha Stops, all open in your window, paced for ${formatMinutes(minutes)}.`;
+  const budgetBit = prefs.budget === 0
+    ? 'every stop is free'
+    : prefs.budget === 999
+      ? 'no spend cap'
+      : `every stop is $${prefs.budget} or less`;
+  const summary = `Built for ${companyWord} around ${regionName} — ${picked.length} Aloha Stop${picked.length === 1 ? '' : 's'}, ${budgetBit}, paced for ${formatMinutes(minutes)}.`;
 
   return {
     id: uid('adv'), title, summary, stopIds: picked.map((s) => s.id),
